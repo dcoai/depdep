@@ -109,15 +109,28 @@ Depdep runs *before* `mix deps.get`, so it cannot be a dependency in your
 `mix.exs` — that would be circular. Commit this as `scripts/depdep.exs`:
 
 ```elixir
-Mix.install([
-  {:depdep, git: "https://gitlab.conet.yarina.org/dco-tek/depdep.git", tag: "v0.1.0"}
-])
+# Depdep lives in a private project, so the URL has to carry credentials, and
+# what is available differs between a developer's machine and a CI container.
+# A developer has an ssh key; a job has CI_JOB_TOKEN and no key at all.
+url =
+  case System.get_env("CI_JOB_TOKEN") do
+    nil -> "git@gitlab.example.com:group/depdep.git"
+    token -> "https://gitlab-ci-token:#{token}@gitlab.example.com/group/depdep.git"
+  end
+
+Mix.install([{:depdep, git: url, tag: "v0.1.0"}])
 
 Depdep.CLI.main(System.argv())
 ```
 
 `Mix.install/2` fetches into its own cache, independent of your project's
 `deps/`, so there is no ordering problem and no root Mix project required.
+
+**For the CI half to work, depdep must allow it.** In depdep's
+*Settings -> CI/CD -> Job token permissions*, add the consuming project to the
+allowlist — otherwise the clone comes back 404 and you will think the tag is
+wrong. If depdep is public on your instance, skip all of this and use the plain
+`https://` URL with no credentials.
 
 ### 4. Wire it into CI
 
