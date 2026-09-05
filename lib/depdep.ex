@@ -9,11 +9,24 @@ defmodule Depdep do
 
   ## Harness properties
 
-    * **Fail-safe toward more work.** Every failure mode — no credentials, an
-      unreachable store, an unparseable lock, a dependency cycle, a git
-      dependency whose closure cannot be known — skips the dependency and lets
-      Mix compile it. Depdep can never make a build fail or, worse, succeed
-      wrongly. It is a cache; a cold cache is slow, and that is all it is.
+    * **Fail-safe toward more work.** Every failure to reach or use the store —
+      no credentials, an unreachable host, a wrong secret, a corrupt object, a
+      dependency cycle, a git dependency whose closure cannot be known — skips
+      the dependency and lets Mix compile it. The run exits 0 having cost at
+      most a compile Mix was going to do anyway. It is a cache; a cold cache is
+      slow, and that is all it is.
+
+      **The limit of that promise, stated exactly.** Depdep reads two files it
+      does not own, and neither is absorbed: a `mix.lock` that does not parse
+      raises out of `Depdep.Lock.read/1`, an unreadable `config/config.exs`
+      raises out of `Depdep.Config.read/3`, and the run exits non-zero. That is
+      the right behaviour rather than a gap — an input depdep cannot read is one
+      `mix deps.get` and `mix compile` cannot read either, so the build was
+      going to fail at the next command regardless. Depdep fails it earlier and
+      names the file. NO `try/rescue` is what keeps this honest: rescuing here
+      would convert a broken project into a slow one and hide which file was
+      wrong.
+
     * **Decisions are visible.** Every hit, miss and skip prints its reason to
       stderr, so a surprising result can be read rather than guessed at.
     * **Append-only.** The store's credentials should carry GetObject and

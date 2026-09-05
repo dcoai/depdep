@@ -9,6 +9,8 @@ defmodule Depdep.CLI do
       Depdep.CLI.main(System.argv())
   """
 
+  alias Depdep.Report
+
   @switches [
     plan: :boolean,
     pull: :boolean,
@@ -66,8 +68,8 @@ defmodule Depdep.CLI do
 
       {:ok, cfg} ->
         Depdep.S3.start()
-        totals = Enum.map(projects, &transfer_project(root, &1, env, direction, cfg))
-        report(direction, totals)
+        tallies = Enum.map(projects, &transfer_project(root, &1, env, direction, cfg))
+        IO.puts("depdep: " <> Report.render(direction, Report.merge(tallies)))
     end
   end
 
@@ -75,40 +77,44 @@ defmodule Depdep.CLI do
     case Depdep.keys_for(root, project, env) do
       {:error, reason} ->
         warn("#{project}: #{reason} — every dependency will be compiled")
-        {0, 0, 0}
+        %{}
 
       {:ok, keys, lock} ->
         project_dir = Path.join(root, project)
 
         keys
         |> Enum.sort()
-        |> Enum.reduce({0, 0, 0}, fn entry, acc ->
-          step(entry, project, lock, project_dir, env, direction, cfg, acc)
+        |> Enum.reduce(%{}, fn entry, tally ->
+          step(entry, project, lock, project_dir, env, direction, cfg, tally)
         end)
     end
   end
 
-  defp step({name, {:skip, reason}}, project, _lock, _dir, _env, _direction, _cfg, {h, m, s}) do
-    warn("#{project}/#{name}: skipped — #{reason}")
-    {h, m, s + 1}
-  end
+  # `Depdep.Report.outcome/3` decides everything that can be decided without the
+  # network, and only `:fetch` and `:offer` reach the store at all.
+  defp step({name, resolution}, project, lock, project_dir, env, direction, cfg, tally) do
+    complete? = Depdep.Archive.complete?(project_dir, name, env)
 
-  defp step({name, {:key, hash}}, project, lock, project_dir, env, direction, cfg, {h, m, s}) do
-    object = Depdep.Key.object(name, Map.fetch!(lock, name), hash)
+    case Report.outcome(direction, resolution, complete?) do
+      {:done, :skipped} ->
+        {:skip, reason} = resolution
+        warn("#{project}/#{name}: skipped — #{reason}")
+        Report.count(tally, direction, :skipped)
 
-    # Both trees, not just the build: a dependency with `_build` but no `deps`
-    # would be treated as present, and Mix would then recompile it the moment
-    # `mix deps.get` fetched the source. See `Depdep.Archive`.
-    case {direction, Depdep.Archive.complete?(project_dir, name, env)} do
-      # Already present locally. Pull has nothing to do; push offers it to the store.
-      {:pull, true} -> {h, m, s + 1}
-      {:pull, false} -> pull_one(cfg, object, project_dir, project, name, {h, m, s})
-      {:push, false} -> {h, m, s + 1}
-      {:push, true} -> push_one(cfg, object, project_dir, env, project, name, {h, m, s})
+      {:done, bucket} ->
+        Report.count(tally, direction, bucket)
+
+      {:network, action} ->
+        {:key, hash} = resolution
+        object = Depdep.Key.object(name, Map.fetch!(lock, name), hash)
+        reach(action, cfg, object, project_dir, env, project, name, tally)
     end
   end
 
-  defp pull_one(cfg, object, project_dir, project, name, {h, m, s}) do
+  # Both trees, not just the build: a dependency with `_build` but no `deps`
+  # would be treated as present, and Mix would then recompile it the moment
+  # `mix deps.get` fetched the source. See `Depdep.Archive`.
+  defp reach(:fetch, cfg, object, project_dir, _env, project, name, tally) do
     tmp = tmp_path()
 
     result =
@@ -121,32 +127,32 @@ defmodule Depdep.CLI do
 
     case result do
       :ok ->
-        {h + 1, m, s}
+        Report.count(tally, :pull, :pulled)
 
       {:error, "not found"} ->
-        {h, m + 1, s}
+        Report.count(tally, :pull, :missing)
 
       {:error, reason} ->
         warn("#{project}/#{name}: pull failed (#{reason}) — Mix will compile it")
-        {h, m + 1, s}
+        Report.count(tally, :pull, :missing)
     end
   end
 
-  defp push_one(cfg, object, project_dir, env, project, name, {h, m, s}) do
+  defp reach(:offer, cfg, object, project_dir, env, project, name, tally) do
     case Depdep.S3.head(cfg, object) do
       :hit ->
-        {h + 1, m, s}
+        Report.count(tally, :push, :stored)
 
       :miss ->
-        upload(cfg, object, project_dir, env, project, name, {h, m, s})
+        upload(cfg, object, project_dir, env, project, name, tally)
 
       {:error, reason} ->
         warn("#{project}/#{name}: HEAD failed (#{reason}) — not uploading")
-        {h, m, s + 1}
+        Report.count(tally, :push, :skipped)
     end
   end
 
-  defp upload(cfg, object, project_dir, env, project, name, {h, m, s}) do
+  defp upload(cfg, object, project_dir, env, project, name, tally) do
     tmp = tmp_path()
 
     result =
@@ -159,26 +165,16 @@ defmodule Depdep.CLI do
 
     case result do
       :ok ->
-        {h, m + 1, s}
+        Report.count(tally, :push, :uploaded)
 
       {:error, reason} ->
         warn("#{project}/#{name}: upload failed (#{reason}) — the store simply stays cold")
-        {h, m, s + 1}
+        Report.count(tally, :push, :skipped)
     end
   end
 
   defp tmp_path,
     do: Path.join(System.tmp_dir!(), "depdep-#{:erlang.unique_integer([:positive])}.tar.gz")
-
-  defp report(direction, totals) do
-    {h, m, s} =
-      Enum.reduce(totals, {0, 0, 0}, fn {a, b, c}, {x, y, z} -> {a + x, b + y, c + z} end)
-
-    case direction do
-      :pull -> IO.puts("depdep: pulled #{h}, missing #{m}, skipped #{s}")
-      :push -> IO.puts("depdep: already stored #{h}, uploaded #{m}, skipped #{s}")
-    end
-  end
 
   defp warn(message), do: IO.puts(:stderr, "depdep: #{message}")
 
