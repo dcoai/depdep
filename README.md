@@ -76,11 +76,6 @@ miss* has made things worse.
 
 ## Getting started
 
-> **Nothing here runs yet.** This section is the interface the extraction is
-> being built against (issue #1); the working implementation currently lives in
-> `dco-tek/bizex` as `scripts/dep_store.exs`. Treat this as the specification
-> until #1 closes.
-
 ### 1. What you need
 
 - An S3-compatible object store. MinIO is what this was built against; anything
@@ -151,11 +146,18 @@ and is not re-sent.
 ### 5. Poncho projects
 
 Several independent Mix projects in one repository, each with its own `deps/`
-and `_build/`. Name the members and depdep treats each as its own consumer, so a
-package compiled for one is restored for the others whenever the inputs agree:
+and `_build/`. **Nothing needs to be said** — with no `mix.exs` at the root,
+depdep treats every `mix.exs` beneath it as a member, and a package compiled for
+one is restored for the others whenever the inputs agree.
+
+Two options for when the default is wrong:
 
 ```sh
-elixir scripts/depdep.exs --pull --member platform/crm --member hosts/app
+# a member on a different toolchain has nothing to share, so skip the scan
+elixir scripts/depdep.exs --pull --exclude clients
+
+# or name the members explicitly, which always wins over discovery
+elixir scripts/depdep.exs --pull --project platform/crm --project hosts/app
 ```
 
 This is where the deduplication is largest: the project this was extracted from
@@ -184,7 +186,10 @@ should be your own code.
 
 ## Status
 
-**Skeleton only — there is no implementation in this repository yet.** The
-working code is `scripts/dep_store.exs` in `dco-tek/bizex`, where it has been
-running in CI: 148 stored objects, zero dependencies recompiled, pipeline ~28
-minutes to 6m24s. Extracting it here is issue #1.
+Extracted from `dco-tek/bizex`, where the original ran in CI: 148 stored
+objects, zero dependencies recompiled, pipeline ~28 minutes to 6m24s.
+
+The extraction is verified against that live store — the same eleven projects
+compute **564 byte-identical keys**, and every one of the 148 objects already in
+the store is one this code asks for. `dco-tek/bizex` has not yet been converted
+to consume the package; that is filed there.
