@@ -10,6 +10,7 @@ defmodule Depdep.MixProject do
       version: @version,
       elixir: "~> 1.15",
       elixirc_options: [warnings_as_errors: true],
+      elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),
       name: "Dependency Depot",
       description: description(),
@@ -23,6 +24,11 @@ defmodule Depdep.MixProject do
   def application do
     [extra_applications: [:inets, :ssl, :crypto]]
   end
+
+  # Fixtures for the key rules live in test/support so they can be shared between
+  # test files without being compiled into the package.
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
 
   # DELIBERATELY EMPTY, AND IT HAS TO STAY THAT WAY.
   #
