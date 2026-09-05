@@ -1,0 +1,24 @@
+# Depdep has no dependencies, so there is nothing to fetch and nothing to cache.
+# The whole pipeline is compile + format + test.
+default:
+  image: hexpm/elixir:1.20.4-erlang-29.0.5-debian-bookworm-20260824
+  interruptible: true
+  before_script:
+    - mix local.hex --force && mix local.rebar --force
+
+variables:
+  MIX_ENV: test
+  # See the note in dco-tek/bizex's .gitlab-ci.yml: ERTS sizes the port table
+  # from the file-descriptor limit, and the runner's containers inherit an
+  # effectively infinite `nofile`, so every BEAM allocates ~1.5 GB before
+  # running an instruction.
+  ERL_MAX_PORTS: "65536"
+
+stages: [test]
+
+test:
+  stage: test
+  script:
+    - mix format --check-formatted
+    - mix compile --warnings-as-errors
+    - mix test
