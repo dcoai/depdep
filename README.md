@@ -74,6 +74,14 @@ outcome of a broken depot is that Mix compiles the dependency, which is what it
 would have done anyway. A build tool that can fail your pipeline for a *cache
 miss* has made things worse.
 
+**Two files sit outside that promise, and it is worth being exact about which.**
+Depdep reads your `mix.lock` and your `config/config.exs`; if either cannot be
+read, the run exits non-zero rather than carrying on. That is deliberate. A
+lockfile that does not parse is one `mix deps.get` cannot parse either, so the
+pipeline was going to stop at the next command regardless — depdep stops it one
+command earlier and names the file. What it never does is absorb a broken
+project into a slow one.
+
 ## Getting started
 
 ### 1. What you need
@@ -178,20 +186,38 @@ compiled 564 dependency instances over 113 distinct packages every pipeline.
 
 ### 6. Check it is working
 
-The output says what happened, in the terms that matter:
+The output says what happened, in the terms that matter. A cold pipeline, then
+the push after the build that pipeline ran:
 
 ```
-depdep: pulled 555, missing 8, skipped 1
-depdep: already stored 555, uploaded 0, skipped 9
+depdep: pulled 555, missing 8, already present 0, skipped 1
+depdep: already stored 555, uploaded 8, not built here 0, skipped 1
 ```
 
-- **`uploaded 0`** on a repeat run means the store has converged — the good
-  steady state, not a failure to write.
+Every bucket is printed even at zero, and the four **sum to the number of
+dependencies in your lock** — 564 here. That is the point of the shape: a
+number can be read as a count of packages, and a total that does not add up is
+a bug worth reporting.
+
+- **`pulled N`** and **`already stored N`** are the win — a package this build
+  did not have to compile.
 - **`missing N`** is a genuine miss: those inputs have no object yet, so Mix
-  compiles them and `--push` stores the result.
-- **`skipped N`** is a dependency depdep will not key, almost always one taken
-  from a git remote — the lockfile carries no dependency list for it, so no
-  Merkle key can be computed. Its dependents are skipped with it.
+  compiles them and `--push` stores the result. On the next pipeline they move
+  into `pulled`, and `uploaded` falls to 0. **`uploaded 0` is the converged
+  steady state, not a failure to write.**
+- **`already present N`** is a `--pull` that found both trees already on disk
+  and did nothing. In CI this is 0, because the checkout is empty. On a
+  developer's machine with a warm `_build` it is where nearly everything lands
+  — that is a no-op, and the expected reading, not a problem.
+- **`not built here N`** is a `--push` with nothing to offer for that
+  dependency, because this project has no `deps/` + `_build/` pair for it.
+  Normally it means you pushed before the build, or the build never needed
+  that dependency.
+- **`skipped N`** is the only number that means depdep *cannot help*: a
+  dependency it will not key, almost always one taken from a git remote — the
+  lockfile carries no dependency list for it, so no Merkle key can be computed.
+  Its dependents are skipped with it, which is why one git dependency can
+  account for several.
 
 To confirm the store is being used at all rather than a CI cache underneath it,
 look for zero recompiles of dependencies in the compile output: every `==>` line
