@@ -74,7 +74,117 @@ outcome of a broken depot is that Mix compiles the dependency, which is what it
 would have done anyway. A build tool that can fail your pipeline for a *cache
 miss* has made things worse.
 
+## Getting started
+
+> **Nothing here runs yet.** This section is the interface the extraction is
+> being built against (issue #1); the working implementation currently lives in
+> `dco-tek/bizex` as `scripts/dep_store.exs`. Treat this as the specification
+> until #1 closes.
+
+### 1. What you need
+
+- An S3-compatible object store. MinIO is what this was built against; anything
+  speaking Signature v4 will do.
+- A bucket, and an identity with **Get and Put on that bucket — and nothing
+  else**. Depdep never deletes, and an identity that cannot delete is one that
+  cannot be talked into wiping your store.
+- Elixir 1.15 or later on the machine that runs it.
+
+### 2. Point it at the store
+
+Four environment variables. The first two are not secret and belong with the
+rest of your build's shape; the second two are credentials and belong wherever
+your CI keeps those.
+
+| variable | example | |
+|---|---|---|
+| `DEPDEP_ENDPOINT` | `http://10.0.0.5:9000` | required |
+| `DEPDEP_BUCKET` | `elixir-dep-store` | required |
+| `DEPDEP_ACCESS_KEY` | `depdep` | required |
+| `DEPDEP_SECRET_KEY` | | required, keep it masked |
+| `DEPDEP_REGION` | `us-east-1` | optional, this is the default |
+
+**If any of them is unset, depdep says so and exits 0.** Nothing breaks; Mix
+compiles the dependency as it always would. You can wire depdep into a pipeline
+before the credentials exist and nothing will fail.
+
+### 3. Add the bootstrap script
+
+Depdep runs *before* `mix deps.get`, so it cannot be a dependency in your
+`mix.exs` — that would be circular. Commit this as `scripts/depdep.exs`:
+
+```elixir
+Mix.install([
+  {:depdep, git: "https://gitlab.conet.yarina.org/dco-tek/depdep.git", tag: "v0.1.0"}
+])
+
+Depdep.CLI.main(System.argv())
+```
+
+`Mix.install/2` fetches into its own cache, independent of your project's
+`deps/`, so there is no ordering problem and no root Mix project required.
+
+### 4. Wire it into CI
+
+```yaml
+script:
+  - elixir scripts/depdep.exs --pull     # restore what the store has
+  - mix deps.get                         # fetch only what it did not
+  - mix compile
+  - mix test
+  - elixir scripts/depdep.exs --push     # upload what the store lacked
+```
+
+**Pull *before* `mix deps.get`, not after.** This is the one ordering mistake
+that looks like it works and is not. A stored object carries both the compiled
+`_build/` tree and the `deps/` source that produced it. If you fetch source
+first, `mix deps.get` writes files with fresh mtimes, Mix compares those against
+the restored build manifests, finds everything stale, and rebuilds all of it —
+you get a perfect restore followed by a full recompile, and a pipeline *slower*
+than having no store at all. Measured, on the way to getting this right: 16 of
+16 dependencies restored, 16 recompiled, 9% slower than no store.
+
+Put `--push` after the build succeeds, so a failed build cannot populate the
+store. It uploads only what is missing; anything restored above is a HEAD hit
+and is not re-sent.
+
+### 5. Poncho projects
+
+Several independent Mix projects in one repository, each with its own `deps/`
+and `_build/`. Name the members and depdep treats each as its own consumer, so a
+package compiled for one is restored for the others whenever the inputs agree:
+
+```sh
+elixir scripts/depdep.exs --pull --member platform/crm --member hosts/app
+```
+
+This is where the deduplication is largest: the project this was extracted from
+compiled 564 dependency instances over 113 distinct packages every pipeline.
+
+### 6. Check it is working
+
+The output says what happened, in the terms that matter:
+
+```
+depdep: pulled 555, missing 8, skipped 1
+depdep: already stored 555, uploaded 0, skipped 9
+```
+
+- **`uploaded 0`** on a repeat run means the store has converged — the good
+  steady state, not a failure to write.
+- **`missing N`** is a genuine miss: those inputs have no object yet, so Mix
+  compiles them and `--push` stores the result.
+- **`skipped N`** is a dependency depdep will not key, almost always one taken
+  from a git remote — the lockfile carries no dependency list for it, so no
+  Merkle key can be computed. Its dependents are skipped with it.
+
+To confirm the store is being used at all rather than a CI cache underneath it,
+look for zero recompiles of dependencies in the compile output: every `==>` line
+should be your own code.
+
 ## Status
 
-Extracted from `dco-tek/bizex`, where it has been running in CI. This repository
-is the packaging work; see the issue tracker.
+**Skeleton only — there is no implementation in this repository yet.** The
+working code is `scripts/dep_store.exs` in `dco-tek/bizex`, where it has been
+running in CI: 148 stored objects, zero dependencies recompiled, pipeline ~28
+minutes to 6m24s. Extracting it here is issue #1.
