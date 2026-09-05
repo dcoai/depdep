@@ -171,6 +171,15 @@ and `_build/`. **Nothing needs to be said** — with no `mix.exs` at the root,
 depdep treats every `mix.exs` beneath it as a member, and a package compiled for
 one is restored for the others whenever the inputs agree.
 
+**First, check that you need this.** If your members can share one build — an
+umbrella, or plain projects pointing `build_path`, `deps_path`, `config_path`
+and `lockfile` at a common root ([`Mix.Project`](https://hexdocs.pm/mix/Mix.Project.html),
+which is all an umbrella does) — then Mix already compiles each package once
+for all of them, at no cost and with no store to run. Do that instead.
+Depdep's poncho case is for members that deliberately *cannot* share a build:
+independent dependency sets, members on different toolchains, or a boundary
+between them that has to stay real.
+
 Two options for when the default is wrong:
 
 ```sh
@@ -222,6 +231,77 @@ a bug worth reporting.
 To confirm the store is being used at all rather than a CI cache underneath it,
 look for zero recompiles of dependencies in the compile output: every `==>` line
 should be your own code.
+
+## Prior art
+
+Depdep is not the first attempt at this problem, and one of the earlier ones is
+the better answer if you are already set up for it. Worth knowing what you are
+choosing between.
+
+### Nix is the closest relative
+
+[`deps_nix`](https://github.com/code-supply/deps_nix) and
+[`mix2nix`](https://github.com/ydlr/mix2nix) turn each `mix.lock` entry into
+its own Nix derivation. A Nix store path is a hash over that derivation's
+inputs, and those inputs include the store paths of the children it was built
+against — **the same recursion this README spends a section arguing for, except
+obtained by construction rather than by argument.** Put a binary cache behind
+it and you have depdep's restore, with reported CI reductions in the same
+range. If you already run Nix, use it; nothing here is worth adding a second
+mechanism for.
+
+Two differences, and the first is the substantive one:
+
+- **Compile-time configuration is part of depdep's key.** A dependency's
+  derivation is a function of *that dependency's* inputs. Your
+  `config/config.exs` is not among them — it belongs to the consumer project,
+  outside the dependency entirely. But `Application.compile_env/2` and
+  module attributes bake values from it into the dependency's bytecode, which
+  is why two members that configure the same package differently need
+  different objects. `Depdep.Config` puts a per-app slice of exactly that
+  configuration into the key. What a derivation-keyed store returns in that
+  situation is a question worth asking of whichever tool you pick.
+- **No Nix, and no generated file to keep in sync.** Depdep reads `mix.lock`
+  at the moment it runs, so there is no checked-in derivation set that can
+  drift from the lock it was generated from.
+
+### Bazel is the general answer, and is not available here
+
+Action-level content hashing plus a remote cache is this problem solved in
+general, for every language at once. It is not an option on the BEAM today:
+[`rules_erlang`](https://github.com/rabbitmq/rules_erlang) is unmaintained —
+RabbitMQ moved back to erlang.mk once it caught up — and there is no working
+`rules_elixir`. Worth knowing so you don't go looking.
+
+### Precompiled artifacts are the ecosystem's precedent, not a competitor
+
+[`rustler_precompiled`](https://github.com/philss/rustler_precompiled),
+[`elixir_make`](https://github.com/elixir-lang/elixir_make) with
+[`cc_precompiler`](https://hexdocs.pm/cc_precompiler/precompilation_guide.html),
+and [Nerves](https://hexdocs.pm/nerves/) system artifacts all say "download
+this rather than compile it", so the idea needs no defending here. The
+mechanism is a different one: those artifacts are *publisher*-produced, keyed
+on package version plus target triple, and cover native code. Depdep's are
+*consumer*-produced, keyed on the whole input closure, and cover Elixir
+bytecode. They do not overlap, and a project can use both.
+
+### Mix itself
+
+Two open issues describe this problem from inside Mix.
+[elixir-lang#12520](https://github.com/elixir-lang/elixir/issues/12520)
+proposes keeping compiled dependencies in `_build` **keyed by version**, so
+switching branches stops costing a recompile — the local form of what depdep
+does across machines, under exactly the key `Depdep.Key` shows to be unsound:
+bump `spark` and `ash`'s version does not move while its correct bytecode does.
+[elixir-lang#14425](https://github.com/elixir-lang/elixir/issues/14425) covers
+git dependencies against CI caches. Both are open.
+
+[Elixir 1.19](https://elixir-lang.org/blog/2025/10/16/elixir-v1-19-0-released/)
+attacks the same wall-clock cost from the other end:
+`MIX_OS_DEPS_COMPILE_PARTITION_COUNT` compiles dependencies in parallel across
+OS processes, reportedly up to 4x faster. **These compose, and you want both.**
+Depdep removes compilations; 1.19 makes the remaining ones cheaper — and the
+set it makes cheaper is precisely depdep's `missing N`.
 
 ## Status
 
