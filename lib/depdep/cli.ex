@@ -210,7 +210,7 @@ defmodule Depdep.CLI do
 
   defp usage do
     """
-    Dependency Depot — a content-addressed store for build artifacts.
+    Depdep — a content-addressed store for build artifacts.
 
       --plan     computed keys, no network
       --pull     restore what the store has

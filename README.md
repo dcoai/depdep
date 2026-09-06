@@ -1,10 +1,20 @@
-# Dependency Depot
+# Depdep
 
-Compile a package **once per distinct build**, and restore it everywhere else.
+Do a piece of build work **once per distinct build**, and restore it everywhere
+else.
 
-Depdep stores each compiled Elixir dependency as its own object, keyed by a
-**recursive Merkle hash over that dependency's entire input closure**. A restore
-is therefore only ever the build the consumer would have produced itself.
+Depdep is a content-addressed store for build artifacts, with three providers:
+compiled Elixir dependencies, Debian packages, and git mirrors. Each keys its
+objects in the way that is actually sound for that kind of artifact, and those
+ways differ sharply — a `.deb` needs nothing more than its own filename, while a
+compiled dependency needs a hash of everything that went into it.
+
+The mix provider is the deepest of the three, and the three sections that follow
+are about it. **It stores each compiled Elixir dependency as its own object,
+keyed by a recursive Merkle hash over that dependency's entire input closure.** A
+restore is therefore only ever the build the consumer would have produced itself.
+For the other two, see [apt](#caching-apt-packages-too) and
+[git](#mirroring-git-repositories).
 
 ## What problem this solves
 

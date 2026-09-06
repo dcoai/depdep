@@ -1,11 +1,17 @@
 defmodule Depdep do
   @moduledoc """
-  A content-addressed store for compiled Elixir dependencies.
+  A content-addressed store for build artifacts.
 
-  Each dependency is stored as its own object, keyed by a recursive Merkle hash
-  over its entire input closure, so a package is compiled once per distinct build
-  and restored everywhere else. See `Depdep.Key` for why the hash recurses and
-  `Depdep.Archive` for what an object contains.
+  What is stored, how it is keyed and where it belongs on disk are a
+  `Depdep.Provider`'s business — compiled Elixir dependencies, Debian packages
+  and git mirrors each answer those differently. The store, the concurrency and
+  the harness properties below are common to all of them.
+
+  This module holds what the mix provider needs: each dependency is stored as its
+  own object, keyed by a recursive Merkle hash over its entire input closure, so
+  a package is compiled once per distinct build and restored everywhere else. See
+  `Depdep.Key` for why that hash recurses — and why nothing else here does — and
+  `Depdep.Archive` for what such an object contains.
 
   ## Harness properties
 
