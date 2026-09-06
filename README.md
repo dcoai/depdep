@@ -16,6 +16,10 @@ restore is therefore only ever the build the consumer would have produced itself
 For the other two, see [apt](#caching-apt-packages-too) and
 [git](#mirroring-git-repositories).
 
+*On the name: it was shortened from "dependency depot", back when a dependency
+was the only thing it stored. The packages and the mirrors came later, and the
+name stayed.*
+
 ## What problem this solves
 
 Two different ones, depending on the shape of the project.
