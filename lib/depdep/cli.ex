@@ -26,6 +26,8 @@ defmodule Depdep.CLI do
     env: :string,
     package: :keep,
     apt_cache_dir: :string,
+    repo: :keep,
+    git_mirror_dir: :string,
     help: :boolean
   ]
 
@@ -237,6 +239,11 @@ defmodule Depdep.CLI do
                           for --pull; --push reads the archives directory.
       --apt-cache-dir DIR where apt keeps downloaded packages
                           (default /var/cache/apt/archives)
+
+    Options for the git provider:
+
+      --repo URL           a repository to mirror (repeatable)
+      --git-mirror-dir DIR where mirrors are kept (default .depdep/git)
 
     Reads DEPDEP_ENDPOINT, DEPDEP_BUCKET, DEPDEP_ACCESS_KEY, DEPDEP_SECRET_KEY
     and optionally DEPDEP_REGION. With any of them unset, --pull and --push
