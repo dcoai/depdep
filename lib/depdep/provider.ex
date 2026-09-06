@@ -62,7 +62,10 @@ defmodule Depdep.Provider do
   @doc "Write what is on disk for this unit into `tmp`, ready to be stored."
   @callback collect(Unit.t(), Path.t()) :: :ok | {:error, String.t()}
 
-  @providers %{"mix" => Depdep.Provider.Mix}
+  @providers %{
+    "mix" => Depdep.Provider.Mix,
+    "apt" => Depdep.Provider.Apt
+  }
 
   @doc "The provider used when none is named — today's behaviour, unchanged."
   def default, do: ["mix"]

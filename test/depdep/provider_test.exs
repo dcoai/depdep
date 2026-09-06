@@ -14,12 +14,18 @@ defmodule Depdep.ProviderTest do
     assert Provider.resolve(["mix", "mix"]) == {:ok, [Provider.Mix, Provider.Mix]}
   end
 
+  test "providers are addressed by name" do
+    assert Provider.resolve(["apt"]) == {:ok, [Provider.Apt]}
+    assert Provider.resolve(["mix", "apt"]) == {:ok, [Provider.Mix, Provider.Apt]}
+  end
+
   # An unknown provider is a typo in a bootstrap script. Saying which name was
   # not understood, and which are, is the difference between a one-second fix
   # and a confused pipeline.
   test "an unknown provider names itself and the known ones" do
-    assert {:error, reason} = Provider.resolve(["apt"])
-    assert reason =~ ~s("apt")
+    assert {:error, reason} = Provider.resolve(["yum"])
+    assert reason =~ ~s("yum")
     assert reason =~ "mix"
+    assert reason =~ "apt"
   end
 end
