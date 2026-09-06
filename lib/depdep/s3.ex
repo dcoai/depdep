@@ -7,6 +7,25 @@ defmodule Depdep.S3 do
   Signature v4 is about sixty lines, and `:httpc` and `:erl_tar` are in OTP.
   """
 
+  # Read and send in 64 KiB pieces: large enough that the syscall overhead is
+  # noise, small enough that N concurrent uploads costs megabytes rather than
+  # N whole archives.
+  @chunk 65_536
+
+  @doc """
+  How many transfers may be in flight at once.
+
+  Derived, never configured. The work is IO-bound — a round trip to the store
+  and a tar extraction — so this is a multiple of the scheduler count rather
+  than equal to it, clamped so a 2-core laptop still overlaps usefully and a
+  96-core runner does not open ninety-six sessions against one MinIO.
+
+  **`start/0` has to configure `:httpc` to match, and the obvious way to do
+  that is wrong** — see there. The symptom of getting it wrong is a concurrency
+  change that measures as no change at all.
+  """
+  def concurrency, do: (System.schedulers_online() * 4) |> max(8) |> min(32)
+
   @doc """
   Reads the four required environment variables, or says which one is missing.
 
@@ -53,6 +72,25 @@ defmodule Depdep.S3 do
   def start do
     {:ok, _} = Application.ensure_all_started(:inets)
     {:ok, _} = Application.ensure_all_started(:ssl)
+
+    # `max_sessions` is how many connections httpc may open to one host.
+    # `max_keep_alive_length` is NOT a companion to it — it is the QUEUE DEPTH
+    # on a single session, and httpc prefers filling an existing session's queue
+    # over opening another connection.
+    #
+    # So raising both, which reads like the obvious way to allow more
+    # concurrency, does the opposite: every transfer queues behind one socket.
+    # Measured on a local server with 20 ms of artificial latency, 100 requests
+    # at concurrency 32, after one warm-up request had established a session:
+    #
+    #     max_sessions 32, max_keep_alive_length 32  ->  2.13 s   (fully serial)
+    #     max_sessions 32, max_keep_alive_length  1  ->  0.09 s
+    #     default (2 / 5)                            ->  0.13 s
+    #
+    # Keep the queue at 1 so a waiting request opens a connection instead of
+    # joining a line. This is the whole reason the change is worth anything.
+    :ok = :httpc.set_options(max_sessions: concurrency(), max_keep_alive_length: 1)
+
     :ok
   end
 
@@ -76,15 +114,50 @@ defmodule Depdep.S3 do
     end
   end
 
-  def put(cfg, object, source) do
-    body = File.read!(source)
-    hash = :crypto.hash(:sha256, body) |> Base.encode16(case: :lower)
+  @doc """
+  Streams `source` from disk so a large object never sits in memory.
 
-    case request(cfg, :put, object, hash, [{"content-length", "#{byte_size(body)}"}], [], body) do
+  Two passes over the file rather than one, and that is Signature v4's price:
+  the signature covers a SHA-256 of the payload, so the hash must be known
+  before the first byte goes out. Both passes stream.
+
+  `:httpc` takes a body-producing function, and given an explicit
+  `content-length` it sends a plain body rather than switching to chunked
+  transfer-encoding. That matters — chunked would require the
+  `STREAMING-AWS4-HMAC-SHA256-PAYLOAD` signature variant instead of the simple
+  one below.
+  """
+  def put(cfg, object, source) do
+    size = File.stat!(source).size
+    hash = stream_sha256(source)
+    body = {&read_chunk/1, File.open!(source, [:binary, :read])}
+
+    case request(cfg, :put, object, hash, [{"content-length", "#{size}"}], [], body) do
       {:ok, status, _} when status in 200..299 -> :ok
       {:ok, status, body} -> {:error, "PUT returned #{status}: #{String.slice(body, 0, 200)}"}
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  # `:httpc` calls this with the accumulator until it answers `:eof`. The
+  # accumulator is the open file itself, so nothing accrues between calls.
+  defp read_chunk(device) do
+    case IO.binread(device, @chunk) do
+      :eof ->
+        File.close(device)
+        :eof
+
+      data when is_binary(data) ->
+        {:ok, data, device}
+    end
+  end
+
+  defp stream_sha256(path) do
+    path
+    |> File.stream!(@chunk)
+    |> Enum.reduce(:crypto.hash_init(:sha256), &:crypto.hash_update(&2, &1))
+    |> :crypto.hash_final()
+    |> Base.encode16(case: :lower)
   end
 
   defp empty_hash, do: :crypto.hash(:sha256, "") |> Base.encode16(case: :lower)

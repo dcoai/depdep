@@ -86,6 +86,17 @@ defmodule Depdep.ReportTest do
       assert tally == %{not_built: 2, skipped: 1}
     end
 
+    # The property `ordered: false` on the transfer stream rests on: results
+    # arrive in completion order, not lock order, and the tally must not care.
+    test "the tally does not depend on the order outcomes arrive in" do
+      resolutions = [@keyed, @unkeyable, @keyed, @unkeyable, @keyed]
+      reference = tally(:pull, resolutions, complete?: true)
+
+      for _ <- 1..20 do
+        assert tally(:pull, Enum.shuffle(resolutions), complete?: true) == reference
+      end
+    end
+
     # The regression this work item exists for: before the split, this run
     # reported `skipped 555` and the README explained that number as a git
     # dependency, which it was not.

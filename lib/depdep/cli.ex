@@ -82,39 +82,60 @@ defmodule Depdep.CLI do
       {:ok, keys, lock} ->
         project_dir = Path.join(root, project)
 
+        # `timeout: :infinity` is deliberate and is NOT "no timeout". `Depdep.S3`
+        # gives `:httpc` a 15 s connect and 300 s request timeout, so a stuck
+        # transfer comes back as `{:error, _}` — attributable to its dependency,
+        # reported with a reason, and counted in the right bucket. A timeout at
+        # the stream level would surface as `{:exit, :timeout}` carrying no
+        # identity, and the run could name neither the dependency nor the cause.
+        # Enforce it where the identity still exists.
+        #
+        # A crash inside a step still takes the run down, exactly as it did when
+        # this was an `Enum.reduce`. That is not an oversight: `Depdep.S3.put/3`
+        # reads a file depdep itself just wrote, and a failure there is a broken
+        # machine, not a cold cache.
         keys
         |> Enum.sort()
-        |> Enum.reduce(%{}, fn entry, tally ->
-          step(entry, project, lock, project_dir, env, direction, cfg, tally)
+        |> Task.async_stream(
+          fn entry -> step(entry, project, lock, project_dir, env, direction, cfg) end,
+          max_concurrency: Depdep.S3.concurrency(),
+          ordered: false,
+          timeout: :infinity
+        )
+        |> Enum.reduce(%{}, fn {:ok, bucket}, tally ->
+          Report.count(tally, direction, bucket)
         end)
     end
   end
 
   # `Depdep.Report.outcome/3` decides everything that can be decided without the
   # network, and only `:fetch` and `:offer` reach the store at all.
-  defp step({name, resolution}, project, lock, project_dir, env, direction, cfg, tally) do
+  #
+  # Returns the bucket this dependency lands in rather than a tally: results are
+  # folded as they arrive from the stream, so a step must not carry one.
+  defp step({name, resolution}, project, lock, project_dir, env, direction, cfg) do
     complete? = Depdep.Archive.complete?(project_dir, name, env)
 
     case Report.outcome(direction, resolution, complete?) do
       {:done, :skipped} ->
         {:skip, reason} = resolution
         warn("#{project}/#{name}: skipped — #{reason}")
-        Report.count(tally, direction, :skipped)
+        :skipped
 
       {:done, bucket} ->
-        Report.count(tally, direction, bucket)
+        bucket
 
       {:network, action} ->
         {:key, hash} = resolution
         object = Depdep.Key.object(name, Map.fetch!(lock, name), hash)
-        reach(action, cfg, object, project_dir, env, project, name, tally)
+        reach(action, cfg, object, project_dir, env, project, name)
     end
   end
 
   # Both trees, not just the build: a dependency with `_build` but no `deps`
   # would be treated as present, and Mix would then recompile it the moment
   # `mix deps.get` fetched the source. See `Depdep.Archive`.
-  defp reach(:fetch, cfg, object, project_dir, _env, project, name, tally) do
+  defp reach(:fetch, cfg, object, project_dir, _env, project, name) do
     tmp = tmp_path()
 
     result =
@@ -127,32 +148,32 @@ defmodule Depdep.CLI do
 
     case result do
       :ok ->
-        Report.count(tally, :pull, :pulled)
+        :pulled
 
       {:error, "not found"} ->
-        Report.count(tally, :pull, :missing)
+        :missing
 
       {:error, reason} ->
         warn("#{project}/#{name}: pull failed (#{reason}) — Mix will compile it")
-        Report.count(tally, :pull, :missing)
+        :missing
     end
   end
 
-  defp reach(:offer, cfg, object, project_dir, env, project, name, tally) do
+  defp reach(:offer, cfg, object, project_dir, env, project, name) do
     case Depdep.S3.head(cfg, object) do
       :hit ->
-        Report.count(tally, :push, :stored)
+        :stored
 
       :miss ->
-        upload(cfg, object, project_dir, env, project, name, tally)
+        upload(cfg, object, project_dir, env, project, name)
 
       {:error, reason} ->
         warn("#{project}/#{name}: HEAD failed (#{reason}) — not uploading")
-        Report.count(tally, :push, :skipped)
+        :skipped
     end
   end
 
-  defp upload(cfg, object, project_dir, env, project, name, tally) do
+  defp upload(cfg, object, project_dir, env, project, name) do
     tmp = tmp_path()
 
     result =
@@ -165,11 +186,11 @@ defmodule Depdep.CLI do
 
     case result do
       :ok ->
-        Report.count(tally, :push, :uploaded)
+        :uploaded
 
       {:error, reason} ->
         warn("#{project}/#{name}: upload failed (#{reason}) — the store simply stays cold")
-        Report.count(tally, :push, :skipped)
+        :skipped
     end
   end
 
