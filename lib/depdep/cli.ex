@@ -24,6 +24,8 @@ defmodule Depdep.CLI do
     project: :keep,
     exclude: :keep,
     env: :string,
+    package: :keep,
+    apt_cache_dir: :string,
     help: :boolean
   ]
 
@@ -52,6 +54,9 @@ defmodule Depdep.CLI do
   end
 
   defp plan(providers, opts) do
+    # A plan shows what a pull would do; there is no third direction.
+    opts = Keyword.put(opts, :direction, :pull)
+
     Enum.each(providers, fn provider ->
       {:ok, units, warnings} = provider.enumerate(opts)
       Enum.each(warnings, &warn/1)
@@ -82,7 +87,14 @@ defmodule Depdep.CLI do
         # See `t:Depdep.Provider.opts/0`. A provider whose units are not knowable
         # without reading the store first — one holding a manifest — gets a way
         # to read one, without learning anything about S3 or signing.
-        opts = Keyword.put(opts, :fetch, &Depdep.S3.get(cfg, &1, &2))
+        # `:direction` because what a provider wants moved can differ by
+        # direction: `Depdep.Provider.Apt` asks apt what it WILL fetch on a pull
+        # and asks the archives directory what WAS fetched on a push, and those
+        # are genuinely different questions.
+        opts =
+          opts
+          |> Keyword.put(:fetch, &Depdep.S3.get(cfg, &1, &2))
+          |> Keyword.put(:direction, direction)
 
         tallies = Enum.map(providers, &transfer_provider(&1, opts, direction, cfg))
         IO.puts("depdep: " <> Report.render(direction, Report.merge(tallies)))
@@ -218,6 +230,13 @@ defmodule Depdep.CLI do
                       beneath it.
       --exclude DIR   drop a top-level directory from discovery (repeatable)
       --env ENV       MIX_ENV to operate on (default test)
+
+    Options for the apt provider:
+
+      --package NAME      a package the job will install (repeatable). Needed
+                          for --pull; --push reads the archives directory.
+      --apt-cache-dir DIR where apt keeps downloaded packages
+                          (default /var/cache/apt/archives)
 
     Reads DEPDEP_ENDPOINT, DEPDEP_BUCKET, DEPDEP_ACCESS_KEY, DEPDEP_SECRET_KEY
     and optionally DEPDEP_REGION. With any of them unset, --pull and --push

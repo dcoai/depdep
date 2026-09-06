@@ -232,6 +232,64 @@ To confirm the store is being used at all rather than a CI cache underneath it,
 look for zero recompiles of dependencies in the compile output: every `==>` line
 should be your own code.
 
+## Caching apt packages too
+
+A job that installs a few packages before it builds re-downloads them from a
+Debian mirror every pipeline. The same depot can hold those, with the same
+credentials and the same fail-safe rules — `--provider apt`.
+
+**This one is simple, and it is meant to be.** `Depdep.Key` recurses because an
+Elixir dependency's compiled output is a function of its dependencies' compiled
+output. A `.deb` has no such property: the distribution built it once for
+everyone, its contents do not change when its dependencies change, and
+`name_version_arch.deb` already identifies it exactly. **So the key is the
+filename**, the object is the `.deb` itself, and nothing is hashed.
+
+```yaml
+variables:
+  # one place, so the list cannot drift out of step with itself
+  APT_PACKAGES: "libsodium-dev imagemagick"
+
+script:
+  - apt-get update
+  - elixir scripts/depdep.exs --pull --provider apt ${APT_PACKAGES// / --package }
+  - apt-get install -y $APT_PACKAGES
+  - mix test
+  - elixir scripts/depdep.exs --push --provider apt
+```
+
+- **`--pull` asks apt what it is about to fetch** — `apt-get install
+  --print-uris` — and restores those files into `/var/cache/apt/archives`.
+  `apt-get install` looks there before it reaches for the network. Depdep's job
+  ends at populating a directory; it never runs apt for you, edits your sources,
+  or takes a view on your pipeline.
+- **`--push` reads that directory** and uploads whatever the store does not
+  already have. It does not ask apt again — once the packages are installed,
+  `--print-uris` reports nothing, because apt has nothing left to fetch.
+- **Run `apt-get update` first.** Without a package index apt cannot resolve
+  anything, and depdep will say so and restore nothing rather than guess.
+- **Depdep must run in the same container as the `apt-get install` it serves.**
+  That is what makes `--print-uris` trustworthy: it is apt, in the environment
+  that will do the installing, reporting exactly what it would fetch. Run it
+  somewhere else — a different base image, the runner host — and it answers for
+  the wrong machine.
+- **Restored packages are verified** against the checksum apt itself reported.
+  A mismatch is a miss, so apt downloads it; a corrupt object never reaches a
+  package manager. The mix provider has no equivalent, because nothing tells it
+  what a compiled dependency should hash to.
+- `--apt-cache-dir` moves the directory if yours is not the default
+  `/var/cache/apt/archives`.
+
+Objects live under `apt/v1/<distribution>-<codename>/`, so they can be browsed,
+and so two distributions cannot collide on a filename:
+
+```
+apt/v1/debian-trixie/libsodium-dev_1.0.18-1_amd64.deb
+```
+
+Nothing about this changes the mix provider. With no `--provider`, depdep does
+exactly what it did before, so an existing bootstrap script keeps its meaning.
+
 ## Prior art
 
 Depdep is not the first attempt at this problem, and one of the earlier ones is
