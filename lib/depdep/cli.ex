@@ -7,14 +7,20 @@ defmodule Depdep.CLI do
 
       Mix.install([{:depdep, git: "...", tag: "v0.1.0"}])
       Depdep.CLI.main(System.argv())
+
+  **Nothing below names an artifact type.** What is being moved, how it is keyed
+  and where it belongs on disk are all `Depdep.Provider`'s business; this module
+  owns the store, the concurrency, the counting and the rule that no failure
+  here may fail a build.
   """
 
-  alias Depdep.Report
+  alias Depdep.{Provider, Report, Unit}
 
   @switches [
     plan: :boolean,
     pull: :boolean,
     push: :boolean,
+    provider: :keep,
     project: :keep,
     exclude: :keep,
     env: :string,
@@ -23,44 +29,48 @@ defmodule Depdep.CLI do
 
   def main(argv) do
     {opts, _rest, _invalid} = OptionParser.parse(argv, strict: @switches)
-    env = String.to_atom(opts[:env] || "test")
-    root = File.cwd!()
-    projects = Depdep.Layout.projects(root, opts)
 
-    cond do
-      opts[:help] -> IO.puts(usage())
-      opts[:plan] -> plan(root, projects, env)
-      opts[:pull] -> transfer(root, projects, env, :pull)
-      opts[:push] -> transfer(root, projects, env, :push)
-      true -> IO.puts(usage())
+    opts =
+      Keyword.merge(opts,
+        root: File.cwd!(),
+        env: String.to_atom(opts[:env] || "test")
+      )
+
+    case Provider.resolve(Keyword.get_values(opts, :provider)) do
+      {:error, reason} ->
+        warn(reason)
+
+      {:ok, providers} ->
+        cond do
+          opts[:help] -> IO.puts(usage())
+          opts[:plan] -> plan(providers, opts)
+          opts[:pull] -> transfer(providers, opts, :pull)
+          opts[:push] -> transfer(providers, opts, :push)
+          true -> IO.puts(usage())
+        end
     end
   end
 
-  defp plan(root, projects, env) do
-    Enum.each(projects, fn project ->
-      case Depdep.keys_for(root, project, env) do
-        {:ok, keys, lock} ->
-          keys
-          |> Enum.sort()
-          |> Enum.each(fn
-            {name, {:key, hash}} ->
-              IO.puts(
-                "#{project}\t#{name}\t#{Depdep.Lock.version(Map.fetch!(lock, name))}\t#{hash}"
-              )
+  defp plan(providers, opts) do
+    Enum.each(providers, fn provider ->
+      {:ok, units, warnings} = provider.enumerate(opts)
+      Enum.each(warnings, &warn/1)
 
-            {name, {:skip, reason}} ->
-              IO.puts("#{project}\t#{name}\t-\tSKIP #{reason}")
-          end)
-
-        {:error, reason} ->
-          warn("#{project}: #{reason} — every dependency will be compiled")
-      end
+      Enum.each(units, fn unit ->
+        IO.puts([columns(unit), "\t", plan_key(unit.resolution)])
+      end)
     end)
   end
 
+  defp columns(%Unit{group: nil} = unit), do: [unit.name, "\t", unit.detail]
+  defp columns(unit), do: [unit.group, "\t", unit.name, "\t", unit.detail]
+
+  defp plan_key({:key, hash}), do: hash
+  defp plan_key({:skip, reason}), do: "SKIP #{reason}"
+
   # The store is a cache. Every path out of this function that is not a hit ends
-  # in "Mix will compile it", which is why none of them are errors.
-  defp transfer(root, projects, env, direction) do
+  # in "the tool does the work itself", which is why none of them are errors.
+  defp transfer(providers, opts, direction) do
     case Depdep.S3.config() do
       {:error, reason} ->
         warn("store not configured (#{reason}) — skipping #{direction}, nothing will break")
@@ -68,79 +78,70 @@ defmodule Depdep.CLI do
 
       {:ok, cfg} ->
         Depdep.S3.start()
-        tallies = Enum.map(projects, &transfer_project(root, &1, env, direction, cfg))
+
+        # See `t:Depdep.Provider.opts/0`. A provider whose units are not knowable
+        # without reading the store first — one holding a manifest — gets a way
+        # to read one, without learning anything about S3 or signing.
+        opts = Keyword.put(opts, :fetch, &Depdep.S3.get(cfg, &1, &2))
+
+        tallies = Enum.map(providers, &transfer_provider(&1, opts, direction, cfg))
         IO.puts("depdep: " <> Report.render(direction, Report.merge(tallies)))
     end
   end
 
-  defp transfer_project(root, project, env, direction, cfg) do
-    case Depdep.keys_for(root, project, env) do
-      {:error, reason} ->
-        warn("#{project}: #{reason} — every dependency will be compiled")
-        %{}
+  defp transfer_provider(provider, opts, direction, cfg) do
+    {:ok, units, warnings} = provider.enumerate(opts)
+    Enum.each(warnings, &warn/1)
 
-      {:ok, keys, lock} ->
-        project_dir = Path.join(root, project)
-
-        # `timeout: :infinity` is deliberate and is NOT "no timeout". `Depdep.S3`
-        # gives `:httpc` a 15 s connect and 300 s request timeout, so a stuck
-        # transfer comes back as `{:error, _}` — attributable to its dependency,
-        # reported with a reason, and counted in the right bucket. A timeout at
-        # the stream level would surface as `{:exit, :timeout}` carrying no
-        # identity, and the run could name neither the dependency nor the cause.
-        # Enforce it where the identity still exists.
-        #
-        # A crash inside a step still takes the run down, exactly as it did when
-        # this was an `Enum.reduce`. That is not an oversight: `Depdep.S3.put/3`
-        # reads a file depdep itself just wrote, and a failure there is a broken
-        # machine, not a cold cache.
-        keys
-        |> Enum.sort()
-        |> Task.async_stream(
-          fn entry -> step(entry, project, lock, project_dir, env, direction, cfg) end,
-          max_concurrency: Depdep.S3.concurrency(),
-          ordered: false,
-          timeout: :infinity
-        )
-        |> Enum.reduce(%{}, fn {:ok, bucket}, tally ->
-          Report.count(tally, direction, bucket)
-        end)
-    end
+    # `timeout: :infinity` is deliberate and is NOT "no timeout". `Depdep.S3`
+    # gives `:httpc` a 15 s connect and 300 s request timeout, so a stuck
+    # transfer comes back as `{:error, _}` — attributable to its unit, reported
+    # with a reason, and counted in the right bucket. A timeout at the stream
+    # level would surface as `{:exit, :timeout}` carrying no identity, and the
+    # run could name neither the unit nor the cause. Enforce it where the
+    # identity still exists.
+    #
+    # A crash inside a step still takes the run down, exactly as it did when
+    # this was an `Enum.reduce`. That is not an oversight: a provider reading a
+    # file depdep itself just wrote and failing is a broken machine, not a cold
+    # cache.
+    units
+    |> Task.async_stream(&step(provider, &1, direction, cfg),
+      max_concurrency: Depdep.S3.concurrency(),
+      ordered: false,
+      timeout: :infinity
+    )
+    |> Enum.reduce(%{}, fn {:ok, bucket}, tally ->
+      Report.count(tally, direction, bucket)
+    end)
   end
 
   # `Depdep.Report.outcome/3` decides everything that can be decided without the
   # network, and only `:fetch` and `:offer` reach the store at all.
   #
-  # Returns the bucket this dependency lands in rather than a tally: results are
-  # folded as they arrive from the stream, so a step must not carry one.
-  defp step({name, resolution}, project, lock, project_dir, env, direction, cfg) do
-    complete? = Depdep.Archive.complete?(project_dir, name, env)
-
-    case Report.outcome(direction, resolution, complete?) do
+  # Returns the bucket this unit lands in rather than a tally: results are folded
+  # as they arrive from the stream, so a step must not carry one.
+  defp step(provider, unit, direction, cfg) do
+    case Report.outcome(direction, unit.resolution, provider.present?(unit)) do
       {:done, :skipped} ->
-        {:skip, reason} = resolution
-        warn("#{project}/#{name}: skipped — #{reason}")
+        {:skip, reason} = unit.resolution
+        warn("#{Unit.label(unit)}: skipped — #{reason}")
         :skipped
 
       {:done, bucket} ->
         bucket
 
       {:network, action} ->
-        {:key, hash} = resolution
-        object = Depdep.Key.object(name, Map.fetch!(lock, name), hash)
-        reach(action, cfg, object, project_dir, env, project, name)
+        reach(action, provider, unit, cfg)
     end
   end
 
-  # Both trees, not just the build: a dependency with `_build` but no `deps`
-  # would be treated as present, and Mix would then recompile it the moment
-  # `mix deps.get` fetched the source. See `Depdep.Archive`.
-  defp reach(:fetch, cfg, object, project_dir, _env, project, name) do
+  defp reach(:fetch, provider, unit, cfg) do
     tmp = tmp_path()
 
     result =
-      case Depdep.S3.get(cfg, object, tmp) do
-        :ok -> Depdep.Archive.extract(tmp, project_dir)
+      case Depdep.S3.get(cfg, unit.object, tmp) do
+        :ok -> provider.restore(unit, tmp)
         other -> other
       end
 
@@ -154,31 +155,31 @@ defmodule Depdep.CLI do
         :missing
 
       {:error, reason} ->
-        warn("#{project}/#{name}: pull failed (#{reason}) — Mix will compile it")
+        warn("#{Unit.label(unit)}: pull failed (#{reason}) — it will be built as usual")
         :missing
     end
   end
 
-  defp reach(:offer, cfg, object, project_dir, env, project, name) do
-    case Depdep.S3.head(cfg, object) do
+  defp reach(:offer, provider, unit, cfg) do
+    case Depdep.S3.head(cfg, unit.object) do
       :hit ->
         :stored
 
       :miss ->
-        upload(cfg, object, project_dir, env, project, name)
+        upload(provider, unit, cfg)
 
       {:error, reason} ->
-        warn("#{project}/#{name}: HEAD failed (#{reason}) — not uploading")
+        warn("#{Unit.label(unit)}: HEAD failed (#{reason}) — not uploading")
         :skipped
     end
   end
 
-  defp upload(cfg, object, project_dir, env, project, name) do
+  defp upload(provider, unit, cfg) do
     tmp = tmp_path()
 
     result =
-      case Depdep.Archive.create(project_dir, name, env, tmp) do
-        :ok -> Depdep.S3.put(cfg, object, tmp)
+      case provider.collect(unit, tmp) do
+        :ok -> Depdep.S3.put(cfg, unit.object, tmp)
         other -> other
       end
 
@@ -189,7 +190,7 @@ defmodule Depdep.CLI do
         :uploaded
 
       {:error, reason} ->
-        warn("#{project}/#{name}: upload failed (#{reason}) — the store simply stays cold")
+        warn("#{Unit.label(unit)}: upload failed (#{reason}) — the store simply stays cold")
         :skipped
     end
   end
@@ -201,11 +202,16 @@ defmodule Depdep.CLI do
 
   defp usage do
     """
-    Dependency Depot — a content-addressed store for compiled dependencies.
+    Dependency Depot — a content-addressed store for build artifacts.
 
       --plan     computed keys, no network
       --pull     restore what the store has
       --push     upload what it does not
+
+      --provider NAME operate on this artifact kind (repeatable).
+                      Default: mix. Known: #{Provider.known()}
+
+    Options for the mix provider:
 
       --project DIR   operate on this project (repeatable). Default: the current
                       directory if it holds a mix.exs, otherwise every mix.exs
