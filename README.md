@@ -181,9 +181,20 @@ and is not re-sent.
 ### 5. Poncho projects
 
 Several independent Mix projects in one repository, each with its own `deps/`
-and `_build/`. **Nothing needs to be said** — with no `mix.exs` at the root,
-depdep treats every `mix.exs` beneath it as a member, and a package compiled for
-one is restored for the others whenever the inputs agree.
+and `_build/`. **Nothing needs to be said** — depdep treats every `mix.exs`
+beneath the root as a member, at any depth, and a package compiled for one is
+restored for the others whenever the inputs agree. A root `mix.exs` of its own
+makes no difference: a poncho with a root coordinator project gets the root
+*and* its members, not the root instead of them.
+
+A `mix.exs` with no `mix.lock` beside it is not a member — there is nothing to
+key without a lock — which is what separates buildable members from path
+dependencies a parent compiles. Depdep says how many it passed over, once, so
+the number is never a surprise:
+
+```
+depdep: 14 directories have a mix.exs but no mix.lock — not members, nothing to key
+```
 
 **First, check that you need this.** If your members can share one build — an
 umbrella, or plain projects pointing `build_path`, `deps_path`, `config_path`
@@ -197,8 +208,14 @@ between them that has to stay real.
 Two options for when the default is wrong:
 
 ```sh
-# a member on a different toolchain has nothing to share, so skip the scan
+# a member on a different toolchain has nothing to share, so skip the scan.
+# --exclude takes a path prefix, matched on whole segments: this drops
+# clients/wasm and leaves clients_vendor/ alone.
 elixir scripts/depdep.exs --pull --exclude clients
+
+# and since a toolchain varies per member, not per top-level group, a prefix
+# can go as deep as it needs to
+elixir scripts/depdep.exs --pull --exclude logic-analyzer/eval
 
 # or name the members explicitly, which always wins over discovery
 elixir scripts/depdep.exs --pull --project platform/crm --project hosts/app

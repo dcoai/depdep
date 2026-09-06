@@ -224,7 +224,8 @@ defmodule Depdep.CLI do
       --project DIR   operate on this project (repeatable). Default: the current
                       directory if it holds a mix.exs, otherwise every mix.exs
                       beneath it.
-      --exclude DIR   drop a top-level directory from discovery (repeatable)
+      --exclude PREFIX drop a member and everything beneath it (repeatable),
+                      matched on whole path segments
       --env ENV       MIX_ENV to operate on (default test)
 
     Options for the apt provider:

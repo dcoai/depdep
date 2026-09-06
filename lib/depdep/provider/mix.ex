@@ -23,9 +23,10 @@ defmodule Depdep.Provider.Mix do
     root = Keyword.fetch!(opts, :root)
     env = Keyword.fetch!(opts, :env)
 
-    root
-    |> Depdep.Layout.projects(opts)
-    |> Enum.reduce({[], []}, fn project, {units, warnings} ->
+    {projects, notes} = Depdep.Layout.projects(root, opts)
+
+    projects
+    |> Enum.reduce({[], notes}, fn project, {units, warnings} ->
       case Depdep.keys_for(root, project, env) do
         {:ok, keys, lock} ->
           {units ++ units_for(root, project, env, keys, lock), warnings}
