@@ -290,6 +290,54 @@ apt/v1/debian-trixie/libsodium-dev_1.0.18-1_amd64.deb
 Nothing about this changes the mix provider. With no `--provider`, depdep does
 exactly what it did before, so an existing bootstrap script keeps its meaning.
 
+## Mirroring git repositories
+
+A job that clones a large repository pays for it every pipeline. `--provider git`
+keeps a bare mirror in the depot; the consumer clones against it and transfers
+almost nothing.
+
+```yaml
+script:
+  - elixir scripts/depdep.exs --pull --provider git --repo "$BIG_REPO"
+  - git clone --reference .depdep/git/$(basename $BIG_REPO .git).git --dissociate "$BIG_REPO" checkout
+  - elixir scripts/depdep.exs --push --provider git --repo "$BIG_REPO"
+```
+
+Measured against `github.com/philss/rustler_precompiled`, a 7.4 MB repository:
+
+```
+cold clone                        2.43 s
+clone against a restored mirror   0.57 s
+```
+
+**A stale mirror is not a wrong answer, and that is the whole design.** A wrong
+mix object is a build that compiles clean, passes its tests and is wrong — which
+is why `Depdep.Key` recurses over the entire input closure. A mirror is only a
+*seed*: whatever it holds, your own clone reconciles it against the real remote,
+so an out-of-date mirror costs a slightly larger transfer and nothing else.
+
+That is what lets the key be cheap. An object is keyed on the repository and the
+**month**, not on a commit:
+
+```
+git/v1/github.com-philss-rustler_precompiled/2026-09/mirror.tar.gz
+```
+
+- Each monthly object is written once and never modified, so the store stays
+  append-only.
+- Storage is bounded by months rather than by commits — keying per commit would
+  store a full mirror per push.
+- The worst case is **one cold clone per repository per month**: the first
+  pipeline of the month misses, clones normally, and its `--push` stores the
+  mirror for every pipeline after it. Nothing to schedule and nothing to
+  bookkeep.
+- `--push` produces the mirror itself when the store does not already have this
+  month's, so the store fills without anyone priming it.
+- `--git-mirror-dir` moves the mirrors if `.depdep/git` does not suit.
+
+`git@host:group/proj` and `https://host/group/proj.git` are the same repository
+and share one mirror, so reaching it two ways does not store it twice.
+
 ## Prior art
 
 Depdep is not the first attempt at this problem, and one of the earlier ones is

@@ -41,25 +41,47 @@ defmodule Depdep.Archive do
     do: [Path.join("deps", name), Path.join(["_build", to_string(env), "lib", name])]
 
   @doc "Files are added in sorted order so the archive is a function of its contents."
-  def create(project_dir, name, env, dest) do
+  def create(project_dir, name, env, dest),
+    do: create_trees(project_dir, trees(name, env), dest, name)
+
+  @doc """
+  Tars `trees` — paths relative to `base_dir` — into `dest`.
+
+  The generic half of `create/4`, so a provider that stores something other than
+  a dependency's two trees does not have to write its own `:erl_tar` call.
+  `extract/2` was already generic and is the other half.
+  """
+  def create_trees(base_dir, trees, dest, label \\ "this unit") do
+    paths = Enum.flat_map(trees, &Path.wildcard(Path.join([base_dir, &1, "**"]), match_dot: true))
+
     entries =
-      name
-      |> trees(env)
-      |> Enum.flat_map(&Path.wildcard(Path.join([project_dir, &1, "**"]), match_dot: true))
-      |> Enum.filter(&File.regular?/1)
+      (Enum.filter(paths, &File.regular?/1) ++ empty_dirs(paths))
       |> Enum.sort()
       |> Enum.map(fn file ->
-        {file |> Path.relative_to(project_dir) |> String.to_charlist(), String.to_charlist(file)}
+        {file |> Path.relative_to(base_dir) |> String.to_charlist(), String.to_charlist(file)}
       end)
 
     if entries == [] do
-      {:error, "nothing to archive for #{name}"}
+      {:error, "nothing to archive for #{label}"}
     else
       case :erl_tar.create(String.to_charlist(dest), entries, [:compressed]) do
         :ok -> :ok
         {:error, reason} -> {:error, inspect(reason)}
       end
     end
+  end
+
+  # An empty directory is not nothing. A bare git repository ships `refs/heads`,
+  # `objects/pack` and others with no files in them, and `git fsck` rejects a
+  # repository that has lost them — the tar restores perfectly and produces
+  # something git will not accept. Carrying only regular files silently dropped
+  # them.
+  #
+  # `:erl_tar` adds a directory recursively, so an EMPTY one contributes exactly
+  # its own entry and nothing else. A non-empty directory is left out here: its
+  # files are already listed, and tar creates the parents they need.
+  defp empty_dirs(paths) do
+    Enum.filter(paths, fn path -> File.dir?(path) and File.ls!(path) == [] end)
   end
 
   @doc "Extracts into the project directory, recreating both trees beneath it."

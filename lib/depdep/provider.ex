@@ -64,7 +64,8 @@ defmodule Depdep.Provider do
 
   @providers %{
     "mix" => Depdep.Provider.Mix,
-    "apt" => Depdep.Provider.Apt
+    "apt" => Depdep.Provider.Apt,
+    "git" => Depdep.Provider.Git
   }
 
   @doc "The provider used when none is named — today's behaviour, unchanged."
