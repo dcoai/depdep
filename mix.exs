@@ -12,7 +12,7 @@ defmodule Depdep.MixProject do
       elixirc_options: [warnings_as_errors: true],
       elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),
-      name: "Dependency Depot",
+      name: "Depdep",
       description: description(),
       source_url: @source_url,
       docs: [main: "readme", extras: ["README.md"]]
@@ -39,7 +39,7 @@ defmodule Depdep.MixProject do
   defp deps, do: []
 
   defp description do
-    "Content-addressed store for compiled Elixir dependencies, keyed by a " <>
-      "recursive Merkle hash over each dependency's input closure."
+    "Content-addressed store for build artifacts: compiled Elixir dependencies, " <>
+      "distribution packages and git mirrors."
   end
 end
