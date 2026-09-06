@@ -86,17 +86,11 @@ defmodule Depdep.CLI do
       {:ok, cfg} ->
         Depdep.S3.start()
 
-        # See `t:Depdep.Provider.opts/0`. A provider whose units are not knowable
-        # without reading the store first — one holding a manifest — gets a way
-        # to read one, without learning anything about S3 or signing.
         # `:direction` because what a provider wants moved can differ by
         # direction: `Depdep.Provider.Apt` asks apt what it WILL fetch on a pull
         # and asks the archives directory what WAS fetched on a push, and those
         # are genuinely different questions.
-        opts =
-          opts
-          |> Keyword.put(:fetch, &Depdep.S3.get(cfg, &1, &2))
-          |> Keyword.put(:direction, direction)
+        opts = Keyword.put(opts, :direction, direction)
 
         tallies = Enum.map(providers, &transfer_provider(&1, opts, direction, cfg))
         IO.puts("depdep: " <> Report.render(direction, Report.merge(tallies)))

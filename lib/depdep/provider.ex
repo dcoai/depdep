@@ -28,19 +28,19 @@ defmodule Depdep.Provider do
   alias Depdep.Unit
 
   @typedoc """
-  Command-line options, plus `:root`, `:env`, and — during `--pull`/`--push`
-  only — `:fetch`.
+  Command-line options, plus `:root`, `:env` and `:direction`.
 
-  `:fetch` is `(object, destination_path -> :ok | {:error, reason})`. It exists
-  because not every provider can name what it wants without first reading
-  something from the store: a package provider holds a MANIFEST object listing
-  the packages of a set, and cannot expand into per-package units until it has
-  read one. Handing over a function rather than the store config keeps the
-  provider ignorant of S3, signing and credentials.
+  `:direction` is `:pull` or `:push`, because what a provider wants moved can
+  differ between them — `Depdep.Provider.Apt` asks apt what it WILL fetch on a
+  pull and asks the archives directory what WAS fetched on a push. `--plan`
+  passes `:pull`, since a plan shows what a pull would do.
 
-  **It is absent under `--plan`**, which by contract touches no network. A
-  provider that needs it must then enumerate nothing and say why in a warning,
-  rather than assume it is there.
+  **A provider cannot read the store.** `c:enumerate/1` names what it wants from
+  what it can see locally; the caller does every transfer. An earlier version
+  passed in a fetch function for a provider that could not name its units
+  without reading an object first — and no such provider turned out to exist.
+  If one ever does, add it back with the implementation that needs it and a test
+  that exercises it.
   """
   @type opts :: keyword()
 
