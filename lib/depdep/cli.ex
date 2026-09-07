@@ -14,12 +14,16 @@ defmodule Depdep.CLI do
   here may fail a build.
   """
 
-  alias Depdep.{Provider, Report, Roots, Unit}
+  alias Depdep.{Provider, Report, Roots, Sweep, Unit}
 
   @switches [
     plan: :boolean,
     report: :boolean,
+    sweep: :boolean,
+    confirm: :boolean,
     within: :integer,
+    grace: :integer,
+    keep_epochs: :integer,
     consumer: :string,
     ref: :string,
     pull: :boolean,
@@ -101,6 +105,7 @@ defmodule Depdep.CLI do
       opts[:help] -> IO.puts(usage())
       opts[:plan] -> plan(providers, opts)
       opts[:report] -> report(opts)
+      opts[:sweep] -> sweep(opts)
       opts[:pull] -> transfer(providers, opts, :pull)
       opts[:push] -> transfer(providers, opts, :push)
       true -> IO.puts(usage())
@@ -305,6 +310,84 @@ defmodule Depdep.CLI do
     end
   end
 
+  # Operator-run. A pipeline identity has Get and Put and not Delete, so a sweep
+  # with CI credentials fails on permissions — the guard is the credential, not
+  # this flag.
+  defp sweep(opts) do
+    case Depdep.S3.config() do
+      {:error, reason} ->
+        warn("store not configured (#{reason}) — nothing to sweep")
+
+      {:ok, cfg} ->
+        Depdep.S3.start()
+
+        case Depdep.S3.list(cfg) do
+          {:ok, objects} -> sweep_objects(cfg, objects, opts)
+          {:error, reason} -> warn("could not list the store (#{reason})")
+        end
+    end
+  end
+
+  defp sweep_objects(cfg, objects, opts) do
+    within = Keyword.get(opts, :within, 30)
+    {roots, _stored} = Enum.split_with(objects, &String.starts_with?(&1.key, Roots.prefix()))
+    fresh = Enum.filter(roots, &within?(&1, within))
+
+    if fresh == [] do
+      # A store nobody uses and a misconfigured invocation look identical from
+      # here, and one of them would have this delete everything.
+      warn("no root has been written in the last #{within} days — refusing to sweep")
+      warn("run --report first; if consumers really have stopped, widen --within")
+    else
+      live = reachable_set(cfg, fresh)
+
+      rules = [
+        grace_days: Keyword.get(opts, :grace, 2),
+        window_days: within,
+        keep_epochs: Keyword.get(opts, :keep_epochs, 2)
+      ]
+
+      doomed = Sweep.plan(objects, live, rules)
+      protected = Sweep.protected(objects, rules)
+
+      IO.puts(
+        "depdep: #{length(objects)} objects, #{length(fresh)} current roots, " <>
+          "#{protected} within the #{rules[:grace_days]}-day grace period"
+      )
+
+      Enum.each(doomed, fn {object, reason} ->
+        IO.puts(
+          "depdep: #{if opts[:confirm], do: "delete", else: "would delete"} #{object.key} — #{reason}"
+        )
+      end)
+
+      if opts[:confirm], do: delete_all(cfg, doomed), else: dry_run_summary(doomed)
+    end
+  end
+
+  defp dry_run_summary(doomed) do
+    IO.puts(
+      "depdep: #{length(doomed)} objects would be removed, #{mib(Enum.map(doomed, &elem(&1, 0)))} — " <>
+        "re-run with --confirm to remove them"
+    )
+  end
+
+  defp delete_all(cfg, doomed) do
+    removed =
+      Enum.count(doomed, fn {object, _reason} ->
+        case Depdep.S3.delete(cfg, object.key) do
+          :ok ->
+            true
+
+          {:error, reason} ->
+            warn("#{object.key}: delete failed (#{reason}) — leaving it")
+            false
+        end
+      end)
+
+    IO.puts("depdep: removed #{removed} of #{length(doomed)} objects")
+  end
+
   defp render_report(cfg, objects, within) do
     {roots, stored} = Enum.split_with(objects, &String.starts_with?(&1.key, Roots.prefix()))
     {fresh, stale} = Enum.split_with(roots, &within?(&1, within))
@@ -400,6 +483,8 @@ defmodule Depdep.CLI do
 
       --plan     computed keys, no network
       --report   what the store holds, and how much of it is still reachable
+      --sweep    remove what no current root needs (operator only; dry run
+                 unless --confirm is given)
       --pull     restore what the store has
       --push     upload what it does not
 
@@ -415,10 +500,17 @@ defmodule Depdep.CLI do
                       matched on whole path segments
       --env ENV       MIX_ENV to operate on (default test)
 
-    Options for --report:
+    Options for --report and --sweep:
 
       --within DAYS   treat a root written within this many days as current
                       (default 30)
+
+    Options for --sweep:
+
+      --confirm       actually delete. Without it nothing is removed.
+      --grace DAYS    never remove anything created this recently (default 2),
+                      so a push racing the listing is not swept
+      --keep-epochs N git mirrors to keep per repository (default 2)
 
     Options for --pull, which records what this consumer needs:
 
