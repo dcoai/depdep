@@ -185,4 +185,149 @@ defmodule Depdep.S3Test do
       assert request_line == "PUT /bucket/#{object} HTTP/1.1"
     end
   end
+
+  # Serves `bodies` in order on one connection, capturing each request line.
+  # httpc keeps the connection alive, so paging arrives as two requests on one
+  # socket rather than two connections.
+  defp serve_sequence(bodies) do
+    {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true, packet: :raw])
+    {:ok, port} = :inet.port(listen)
+    parent = self()
+
+    spawn_link(fn ->
+      {:ok, sock} = :gen_tcp.accept(listen)
+
+      lines =
+        Enum.map(bodies, fn body ->
+          {:ok, raw} = :gen_tcp.recv(sock, 0, 3000)
+
+          :gen_tcp.send(
+            sock,
+            "HTTP/1.1 200 OK\r\nContent-Length: #{byte_size(body)}\r\n\r\n" <> body
+          )
+
+          raw |> String.split("\r\n") |> hd()
+        end)
+
+      :gen_tcp.close(sock)
+      :gen_tcp.close(listen)
+      send(parent, {:lines, lines})
+    end)
+
+    await = fn ->
+      receive do
+        {:lines, lines} -> lines
+      after
+        5000 -> flunk("the server never received the expected requests")
+      end
+    end
+
+    {port, await}
+  end
+
+  defp listing(keys, next \\ nil) do
+    contents =
+      Enum.map_join(keys, "", fn {key, size} ->
+        "<Contents><Key>#{key}</Key><Size>#{size}</Size>" <>
+          "<LastModified>2026-09-07T10:00:00.000Z</LastModified></Contents>"
+      end)
+
+    token = if next, do: "<NextContinuationToken>#{next}</NextContinuationToken>", else: ""
+
+    ~s(<?xml version="1.0"?><ListBucketResult>#{contents}#{token}</ListBucketResult>)
+  end
+
+  describe "canonical_query/1" do
+    # The verbs that take no query sign an empty canonical query string, exactly
+    # as they did before this existed — so their signatures do not move.
+    test "no parameters is an empty string" do
+      assert S3.canonical_query([]) == ""
+    end
+
+    test "sorts by name" do
+      assert S3.canonical_query([{"prefix", "v2/"}, {"list-type", "2"}]) =~
+               ~r/^list-type=2&prefix=/
+    end
+
+    # Unforgiving in two ways that matter: a space is %20 and never +, and `/`
+    # must be encoded in a VALUE even though it is left alone in a path.
+    test "a space is %20, never +" do
+      assert S3.canonical_query([{"k", "a b"}]) == "k=a%20b"
+    end
+
+    test "encodes / + and = in a value" do
+      assert S3.canonical_query([{"k", "a/b+c=d"}]) == "k=a%2Fb%2Bc%3Dd"
+    end
+
+    # Not a corner case: this is the second page of every listing.
+    test "a realistic continuation token survives" do
+      token = "eyJDb250aW51/YXRpb24rVG9rZW4="
+
+      assert S3.canonical_query([{"continuation-token", token}]) ==
+               "continuation-token=eyJDb250aW51%2FYXRpb24rVG9rZW4%3D"
+    end
+  end
+
+  describe "list/2" do
+    test "returns keys, sizes and modification times" do
+      {port, await} = serve_sequence([listing([{"v2/a.tar.gz", 12}, {"apt/v1/b.deb", 34}])])
+
+      assert {:ok, objects} = S3.list(config(port))
+      assert Enum.map(objects, & &1.key) == ["v2/a.tar.gz", "apt/v1/b.deb"]
+      assert Enum.map(objects, & &1.size) == [12, 34]
+      assert Enum.all?(objects, &(&1.last_modified =~ "2026-09-07"))
+
+      [line | _] = await.()
+      assert line =~ "list-type=2"
+    end
+
+    # A key holding `&` arrives XML-escaped. Getting it back out wrong means
+    # every later request is for a different object.
+    test "unescapes an entity in a key" do
+      {port, _await} = serve_sequence([listing([{"v2/a&amp;b.tar.gz", 1}])])
+      assert {:ok, [object]} = S3.list(config(port))
+      assert object.key == "v2/a&b.tar.gz"
+    end
+
+    test "pages past a continuation token, and sends it on the next request" do
+      token = "tok/en+1="
+
+      {port, await} =
+        serve_sequence([
+          listing([{"one", 1}], token),
+          listing([{"two", 2}])
+        ])
+
+      assert {:ok, objects} = S3.list(config(port))
+      assert Enum.map(objects, & &1.key) == ["one", "two"]
+
+      [_first, second] = await.()
+      assert second =~ "continuation-token=tok%2Fen%2B1%3D"
+    end
+
+    test "a prefix is passed through" do
+      {port, await} = serve_sequence([listing([])])
+      assert {:ok, []} = S3.list(config(port), "git/v1/")
+
+      [line | _] = await.()
+      assert line =~ "prefix=git%2Fv1%2F"
+    end
+
+    # An HTML error page from a proxy must not take the run down.
+    test "a body that is not XML is an error, not a crash" do
+      {port, _await} = serve_sequence(["<html>nope</html>" |> String.replace("<", "!")])
+      assert {:error, reason} = S3.list(config(port))
+      assert reason =~ "not XML"
+    end
+  end
+
+  describe "delete/2" do
+    test "removes one object" do
+      {port, await} = serve_sequence([""])
+      assert S3.delete(config(port), "v2/a.tar.gz") == :ok
+
+      [line | _] = await.()
+      assert line == "DELETE /bucket/v2/a.tar.gz HTTP/1.1"
+    end
+  end
 end

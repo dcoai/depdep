@@ -20,9 +20,11 @@ defmodule Depdep.MixProject do
   end
 
   # `:inets` for `:httpc`, `:ssl` for an https endpoint, `:crypto` for SHA-256
-  # and the HMAC chain of AWS Signature v4. `:erl_tar` is in `:stdlib`.
+  # and the HMAC chain of AWS Signature v4, `:xmerl` to read a bucket listing.
+  # `:erl_tar` is in `:stdlib`. All ship with OTP — none is a dependency in the
+  # sense the empty `deps/0` below forbids.
   def application do
-    [extra_applications: [:inets, :ssl, :crypto]]
+    [extra_applications: [:inets, :ssl, :crypto, :xmerl]]
   end
 
   # Fixtures for the key rules live in test/support so they can be shared between

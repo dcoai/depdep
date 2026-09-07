@@ -4,6 +4,11 @@ default:
   image: hexpm/elixir:1.20.4-erlang-29.0.5-debian-bookworm-20260824
   interruptible: true
   before_script:
+    # The image ships no git, and the runner clones with its own, outside this
+    # container — so nothing needed one until Depdep.Provider.GitTest started
+    # shelling out to it. Those tests are what stands between a restored mirror
+    # and `git fsck` rejecting it, so install git rather than exclude them.
+    - apt-get update && apt-get install -y --no-install-recommends git
     - mix local.hex --force && mix local.rebar --force
 
 variables:
