@@ -14,10 +14,14 @@ defmodule Depdep.CLI do
   here may fail a build.
   """
 
-  alias Depdep.{Provider, Report, Unit}
+  alias Depdep.{Provider, Report, Roots, Unit}
 
   @switches [
     plan: :boolean,
+    report: :boolean,
+    within: :integer,
+    consumer: :string,
+    ref: :string,
     pull: :boolean,
     push: :boolean,
     provider: :keep,
@@ -96,6 +100,7 @@ defmodule Depdep.CLI do
     cond do
       opts[:help] -> IO.puts(usage())
       opts[:plan] -> plan(providers, opts)
+      opts[:report] -> report(opts)
       opts[:pull] -> transfer(providers, opts, :pull)
       opts[:push] -> transfer(providers, opts, :push)
       true -> IO.puts(usage())
@@ -147,6 +152,7 @@ defmodule Depdep.CLI do
   defp transfer_provider(provider, opts, direction, cfg) do
     {:ok, units, warnings} = provider.enumerate(opts)
     Enum.each(warnings, &warn/1)
+    if direction == :pull, do: record_root(provider, units, opts, cfg)
 
     # `timeout: :infinity` is deliberate and is NOT "no timeout". `Depdep.S3`
     # gives `:httpc` a 15 s connect and 300 s request timeout, so a stuck
@@ -256,6 +262,120 @@ defmodule Depdep.CLI do
     end
   end
 
+  # Written before any transfer: the paths are known once units are enumerated,
+  # and a transfer that then fails does not make them less wanted. See
+  # `Depdep.Roots` for why this happens on pull rather than push.
+  defp record_root(provider, units, opts, cfg) do
+    {consumer, ref} = Roots.identity(opts, Keyword.fetch!(opts, :root))
+    object = Roots.path(consumer, ref, Provider.name(provider))
+    paths = units |> Enum.map(& &1.object) |> Enum.reject(&is_nil/1)
+
+    tmp = tmp_path()
+    File.write!(tmp, Roots.encode(paths))
+    result = Depdep.S3.put(cfg, object, tmp)
+    File.rm(tmp)
+
+    case result do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        warn(
+          "could not record what #{consumer}/#{ref} needs (#{reason}) — " <>
+            "reclamation may treat these objects as unreachable"
+        )
+    end
+  end
+
+  # Read-only, and deliberately needs no delete permission: it must be safe to
+  # run with the credentials a pipeline holds.
+  defp report(opts) do
+    case Depdep.S3.config() do
+      {:error, reason} ->
+        warn("store not configured (#{reason}) — nothing to report")
+
+      {:ok, cfg} ->
+        Depdep.S3.start()
+        within = Keyword.get(opts, :within, 30)
+
+        case Depdep.S3.list(cfg) do
+          {:ok, objects} -> render_report(cfg, objects, within)
+          {:error, reason} -> warn("could not list the store (#{reason})")
+        end
+    end
+  end
+
+  defp render_report(cfg, objects, within) do
+    {roots, stored} = Enum.split_with(objects, &String.starts_with?(&1.key, Roots.prefix()))
+    {fresh, stale} = Enum.split_with(roots, &within?(&1, within))
+    reachable = reachable_set(cfg, fresh)
+
+    IO.puts("depdep: #{length(roots)} roots, #{length(fresh)} written in the last #{within} days")
+
+    if stale != [] do
+      IO.puts(
+        "depdep: #{length(stale)} roots older than that are ignored — their consumers have not built"
+      )
+    end
+
+    stored
+    |> Enum.group_by(&group(&1.key))
+    |> Enum.sort()
+    |> Enum.each(fn {group, group_objects} ->
+      {live, dead} = Enum.split_with(group_objects, &MapSet.member?(reachable, &1.key))
+
+      IO.puts(
+        "depdep: #{group}\t#{length(group_objects)} objects, #{mib(group_objects)} — " <>
+          "#{length(live)} reachable, #{length(dead)} not (#{mib(dead)})"
+      )
+    end)
+  end
+
+  # Every path a fresh root names. A root that cannot be read is reported and
+  # skipped: one malformed root must not make a whole store look unreachable.
+  defp reachable_set(cfg, roots) do
+    Enum.reduce(roots, MapSet.new(), fn root, acc ->
+      tmp = tmp_path()
+      result = Depdep.S3.get(cfg, root.key, tmp)
+
+      paths =
+        with :ok <- result,
+             {:ok, contents} <- File.read(tmp),
+             {:ok, paths} <- Roots.decode(contents) do
+          paths
+        else
+          {:error, reason} ->
+            warn("#{root.key}: unreadable root (#{inspect(reason)}) — ignoring it")
+            []
+        end
+
+      File.rm(tmp)
+      Enum.into(paths, acc)
+    end)
+  end
+
+  defp within?(%{last_modified: stamp}, days) do
+    case DateTime.from_iso8601(stamp) do
+      {:ok, at, _} -> DateTime.diff(DateTime.utc_now(), at, :day) <= days
+      _ -> false
+    end
+  end
+
+  # Object paths are readable by design — `v2/...`, `apt/v1/...`, `git/v1/...` —
+  # so the leading segments are the natural grouping.
+  defp group(key) do
+    case String.split(key, "/") do
+      ["v2" | _] -> "v2"
+      [provider, version | _] -> "#{provider}/#{version}"
+      [other | _] -> other
+    end
+  end
+
+  defp mib(objects) do
+    bytes = objects |> Enum.map(&(&1.size || 0)) |> Enum.sum()
+    "#{Float.round(bytes / 1_048_576, 1)} MiB"
+  end
+
   # Bookkeeping: a note that cannot be written is reported and otherwise ignored.
   # Losing one costs a redundant pull next run; failing the build over it would
   # cost far more.
@@ -279,6 +399,7 @@ defmodule Depdep.CLI do
     Depdep — a content-addressed store for build artifacts.
 
       --plan     computed keys, no network
+      --report   what the store holds, and how much of it is still reachable
       --pull     restore what the store has
       --push     upload what it does not
 
@@ -293,6 +414,17 @@ defmodule Depdep.CLI do
       --exclude PREFIX drop a member and everything beneath it (repeatable),
                       matched on whole path segments
       --env ENV       MIX_ENV to operate on (default test)
+
+    Options for --report:
+
+      --within DAYS   treat a root written within this many days as current
+                      (default 30)
+
+    Options for --pull, which records what this consumer needs:
+
+      --consumer NAME who is pulling (default: $CI_PROJECT_PATH, else the
+                      checkout qualified by host)
+      --ref NAME      which branch (default: $CI_COMMIT_REF_SLUG)
 
     Options for the apt provider:
 
