@@ -5,7 +5,7 @@ defmodule Depdep.CLI do
   Invoked from a consumer's bootstrap script, which is how depdep runs before
   `mix deps.get` without being a dependency of the project it is serving:
 
-      Mix.install([{:depdep, git: "...", tag: "v0.1.0"}])
+      Mix.install([{:depdep, git: "...", tag: "v0.2.0"}])
       Depdep.CLI.main(System.argv())
 
   **Nothing below names an artifact type.** What is being moved, how it is keyed
@@ -32,26 +32,73 @@ defmodule Depdep.CLI do
   ]
 
   def main(argv) do
-    {opts, _rest, _invalid} = OptionParser.parse(argv, strict: @switches)
+    with {:ok, opts} <- parse(argv),
+         {:ok, providers} <- Provider.resolve(Keyword.get_values(opts, :provider)) do
+      run(providers, opts)
+    else
+      {:error, problems} ->
+        problems |> List.wrap() |> Enum.each(&warn/1)
+        warn("run with --help for the switches this version understands")
+        System.halt(2)
+    end
+  end
 
-    opts =
-      Keyword.merge(opts,
-        root: File.cwd!(),
-        env: String.to_atom(opts[:env] || "test")
-      )
+  @doc """
+  `{:ok, opts}`, or `{:error, messages}` for anything not understood.
 
-    case Provider.resolve(Keyword.get_values(opts, :provider)) do
-      {:error, reason} ->
-        warn(reason)
+  Separate from `main/1` because `main/1` halts, and a decision worth testing
+  should not require ending the VM to observe.
 
-      {:ok, providers} ->
-        cond do
-          opts[:help] -> IO.puts(usage())
-          opts[:plan] -> plan(providers, opts)
-          opts[:pull] -> transfer(providers, opts, :pull)
-          opts[:push] -> transfer(providers, opts, :push)
-          true -> IO.puts(usage())
-        end
+  **A switch depdep does not understand is a usage error, and usage errors
+  fail.** That is not a hole in "failure is not an error" — that promise is about
+  reaching and using the STORE, where the worst case is that the tool does the
+  work itself. Nothing has failed to be reached here; depdep has been asked for
+  something it cannot do. Silently dropping it is how `dco-tek/metresis` #86 lost
+  an afternoon: `--provider apt` against a tag that predated providers went into
+  `invalid`, the mix provider ran instead, and it died evaluating
+  `config/config.exs` — which reads as a config bug.
+
+  What makes failing safe here is that **an unknown switch cannot arrive on its
+  own.** Someone has to edit the invocation, so this can never break a pipeline
+  that was working; it can only stop one that has just been changed, which is
+  when being stopped is useful.
+  """
+  def parse(argv) do
+    case OptionParser.parse(argv, strict: @switches) do
+      {opts, _rest, []} ->
+        {:ok,
+         Keyword.merge(opts,
+           root: File.cwd!(),
+           env: String.to_atom(opts[:env] || "test")
+         )}
+
+      {_opts, _rest, invalid} ->
+        {:error, Enum.map(invalid, &problem/1)}
+    end
+  end
+
+  # `OptionParser` reports an unknown switch and a badly-typed value the same
+  # way — `{"--thing", nil}` — so the name has to be checked against the known
+  # set. Saying which it is matters: a reader whose value is missing should not
+  # go looking for a typo.
+  defp problem({switch, _value}) do
+    if switch in known_switches() do
+      "#{switch} was given a value it cannot take"
+    else
+      "#{switch} is not a switch this version of depdep understands"
+    end
+  end
+
+  defp known_switches,
+    do: Enum.map(@switches, fn {name, _} -> "--" <> String.replace("#{name}", "_", "-") end)
+
+  defp run(providers, opts) do
+    cond do
+      opts[:help] -> IO.puts(usage())
+      opts[:plan] -> plan(providers, opts)
+      opts[:pull] -> transfer(providers, opts, :pull)
+      opts[:push] -> transfer(providers, opts, :push)
+      true -> IO.puts(usage())
     end
   end
 
