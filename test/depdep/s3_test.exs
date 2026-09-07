@@ -116,4 +116,73 @@ defmodule Depdep.S3Test do
       assert options[:max_keep_alive_length] <= 1
     end
   end
+
+  describe "encode_path/1" do
+    # Mix objects are all unreserved, so this must be the identity for them —
+    # a change here would silently strand every object already in a store.
+    test "leaves an unreserved key exactly as it was" do
+      path = "/bucket/v2/jason/1.4.4/e3b0c44298fc1c14.tar.gz"
+      assert S3.encode_path(path) == path
+    end
+
+    test "leaves the separators alone" do
+      assert S3.encode_path("/a/b/c") == "/a/b/c"
+    end
+
+    # The defect this fixes. `apt-get install --print-uris` reports a Debian
+    # epoch with the colon already percent-encoded, and the apt provider's key
+    # IS that filename — so the key holds a literal `%`, which must reach the
+    # server as `%25` or the server decodes it back to `:` and canonicalises
+    # something the signature never covered.
+    test "encodes a literal percent, so an apt epoch survives the round trip" do
+      assert S3.encode_path("/b/cpp_4%3a12.2.0-3_amd64.deb") ==
+               "/b/cpp_4%253a12.2.0-3_amd64.deb"
+    end
+
+    # The second class of key the old code got wrong for the same reason.
+    test "encodes a plus" do
+      assert S3.encode_path("/b/libx11-6_2%3a1.8.4-2+deb12u2_amd64.deb") ==
+               "/b/libx11-6_2%253a1.8.4-2%2Bdeb12u2_amd64.deb"
+    end
+
+    test "encodes a colon and a space" do
+      assert S3.encode_path("/b/a:b c.deb") == "/b/a%3Ab%20c.deb"
+    end
+  end
+
+  describe "the requested path" do
+    # The invariant: what goes on the wire is what was signed. `request/7`
+    # encodes once and hands the SAME string to `sign/5`, so this asserts the
+    # observable half — that the URL carries the encoded form — and the other
+    # half holds by construction.
+    test "is the encoded key, for a name with reserved characters" do
+      content = "package bytes"
+      path = Path.join(System.tmp_dir!(), "depdep-enc-#{System.unique_integer([:positive])}")
+      File.write!(path, content)
+      on_exit(fn -> File.rm(path) end)
+
+      object = "apt/v1/debian-trixie/cpp_4%3a12.2.0-3_amd64.deb"
+      {port, await} = capture_request(byte_size(content))
+      assert S3.put(config(port), object, path) == :ok
+
+      [request_line | _] = String.split(await.(), "\r\n")
+
+      assert request_line ==
+               "PUT /bucket/apt/v1/debian-trixie/cpp_4%253a12.2.0-3_amd64.deb HTTP/1.1"
+    end
+
+    test "is unchanged for a mix object" do
+      content = "archive"
+      path = Path.join(System.tmp_dir!(), "depdep-enc2-#{System.unique_integer([:positive])}")
+      File.write!(path, content)
+      on_exit(fn -> File.rm(path) end)
+
+      object = "v2/jason/1.4.4/e3b0c44298fc1c14.tar.gz"
+      {port, await} = capture_request(byte_size(content))
+      assert S3.put(config(port), object, path) == :ok
+
+      [request_line | _] = String.split(await.(), "\r\n")
+      assert request_line == "PUT /bucket/#{object} HTTP/1.1"
+    end
+  end
 end

@@ -163,7 +163,11 @@ defmodule Depdep.S3 do
   defp empty_hash, do: :crypto.hash(:sha256, "") |> Base.encode16(case: :lower)
 
   defp request(cfg, method, object, payload_hash, extra, http_opts, body \\ nil) do
-    path = "/" <> cfg.bucket <> "/" <> object
+    # Encoded ONCE, and the same string is both requested and signed. Signature
+    # v4 canonicalises the URI-encoded absolute path, and the request must carry
+    # that same encoding — so encoding here and again inside `sign/5` made the
+    # two disagree for any key holding a reserved character.
+    path = encode_path("/" <> cfg.bucket <> "/" <> object)
     url = cfg.endpoint <> path
     headers = sign(cfg, method, path, payload_hash, extra)
     hdrs = Enum.map(headers, fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end)
@@ -206,7 +210,7 @@ defmodule Depdep.S3 do
       Enum.join(
         [
           method |> Atom.to_string() |> String.upcase(),
-          encode_path(path),
+          path,
           "",
           Enum.map_join(canonical, "", fn {k, v} -> "#{k}:#{v}\n" end),
           signed,
@@ -241,11 +245,31 @@ defmodule Depdep.S3 do
     [{"authorization", auth} | headers]
   end
 
-  # S3 canonicalises each path segment with RFC3986 encoding and does NOT
-  # double-encode. Object names here are `v2/<name>/<version>/<hex>.tar.gz`, all
-  # unreserved, so this is the identity in practice — written out anyway so a
-  # future name containing a reserved character cannot silently break signing.
-  defp encode_path(path) do
+  # RFC3986 per segment, leaving `/` alone. For a mix object —
+  # `v2/<name>/<version>/<hex>.tar.gz`, all unreserved — this is the identity,
+  # which is why every object already in a store keeps its key.
+  #
+  # It is NOT the identity for an apt object, and that is what this exists for.
+  # The apt provider's key is the filename apt reported, and
+  # `apt-get install --print-uris` gives a Debian epoch with the colon already
+  # percent-encoded: `cpp_4%3a12.2.0-3_amd64.deb`. That literal `%` must reach
+  # the server as `%25`, or the server decodes it to `:` and canonicalises
+  # something the signature never covered. `+` is the same class of problem:
+  # reserved in a path, and present in names like
+  # `libx11-6_2%3a1.8.4-2+deb12u2_amd64.deb`.
+  #
+  # Measured before this was fixed, on `dco-tek/metresis`: 10 of 102 packages
+  # failed with 403 — exactly the ten whose filename held a `%3a`.
+  #
+  # The caller encodes once and signs the result. Do not call this again inside
+  # the signer.
+  @doc """
+  RFC3986-encodes an object path, per segment, leaving `/` alone.
+
+  Public because it is the rule the whole signature rests on, and the only part
+  of it testable without a store.
+  """
+  def encode_path(path) do
     path
     |> String.split("/")
     |> Enum.map_join("/", &URI.encode(&1, fn c -> URI.char_unreserved?(c) end))
