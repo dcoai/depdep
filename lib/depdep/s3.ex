@@ -96,7 +96,7 @@ defmodule Depdep.S3 do
 
   @doc "`:hit`, `:miss`, or `{:error, reason}` — never a raise, so a flaky store degrades to a compile."
   def head(cfg, object) do
-    case request(cfg, :head, object, empty_hash(), [], []) do
+    case request(cfg, :head, object, empty_hash(), [], [], []) do
       {:ok, status, _} when status in 200..299 -> :hit
       {:ok, 404, _} -> :miss
       {:ok, status, _} -> {:error, "HEAD returned #{status}"}
@@ -106,7 +106,7 @@ defmodule Depdep.S3 do
 
   @doc "Streams to `dest` so a large object never sits in memory."
   def get(cfg, object, dest) do
-    case request(cfg, :get, object, empty_hash(), [], stream: String.to_charlist(dest)) do
+    case request(cfg, :get, object, empty_hash(), [], [], stream: String.to_charlist(dest)) do
       {:ok, status, _} when status in 200..299 -> :ok
       {:ok, 404, _} -> {:error, "not found"}
       {:ok, status, _} -> {:error, "GET returned #{status}"}
@@ -132,12 +132,98 @@ defmodule Depdep.S3 do
     hash = stream_sha256(source)
     body = {&read_chunk/1, File.open!(source, [:binary, :read])}
 
-    case request(cfg, :put, object, hash, [{"content-length", "#{size}"}], [], body) do
+    case request(cfg, :put, object, hash, [{"content-length", "#{size}"}], [], [], body) do
       {:ok, status, _} when status in 200..299 -> :ok
       {:ok, status, body} -> {:error, "PUT returned #{status}: #{String.slice(body, 0, 200)}"}
       {:error, reason} -> {:error, reason}
     end
   end
+
+  @doc """
+  Every object in the bucket, or under `prefix`, paging until the store stops
+  saying there is more.
+
+  Used by reclamation, never by a pipeline: `--pull` and `--push` know the exact
+  keys they want and never need to enumerate.
+  """
+  def list(cfg, prefix \\ nil), do: list_page(cfg, prefix, nil, [])
+
+  defp list_page(cfg, prefix, token, acc) do
+    query =
+      [{"list-type", "2"}] ++
+        if(prefix, do: [{"prefix", prefix}], else: []) ++
+        if(token, do: [{"continuation-token", token}], else: [])
+
+    case request(cfg, :get, "", empty_hash(), [], query, []) do
+      {:ok, status, body} when status in 200..299 ->
+        case parse_listing(body) do
+          {:ok, objects, nil} -> {:ok, acc ++ objects}
+          {:ok, objects, next} -> list_page(cfg, prefix, next, acc ++ objects)
+          {:error, reason} -> {:error, reason}
+        end
+
+      {:ok, status, body} ->
+        {:error, "LIST returned #{status}: #{String.slice(body, 0, 200)}"}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @doc "Removes one object. Reclamation only — a pipeline identity should not be able to."
+  def delete(cfg, object) do
+    case request(cfg, :delete, object, empty_hash(), [], [], []) do
+      {:ok, status, _} when status in 200..299 -> :ok
+      {:ok, status, body} -> {:error, "DELETE returned #{status}: #{String.slice(body, 0, 200)}"}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # `:xmerl` ships with OTP, like `:inets` and `:crypto`, so this is not a
+  # dependency in the sense `mix.exs` forbids. It is used rather than a regex
+  # because keys are XML-escaped — a key containing `&` arrives as `&amp;` and
+  # must come back out as `&`, or every subsequent request for it is for a
+  # different object.
+  #
+  # A body that is not XML at all — an HTML error page from a proxy — is
+  # rejected before parsing rather than allowed to raise.
+  defp parse_listing(body) do
+    if String.starts_with?(String.trim_leading(body), "<") do
+      {doc, _rest} = :xmerl_scan.string(String.to_charlist(body), quiet: true)
+
+      objects =
+        doc
+        |> xpath(~c"//Contents")
+        |> Enum.map(fn node ->
+          %{
+            key: node |> xpath_text(~c"./Key/text()") |> List.first(),
+            size: node |> xpath_text(~c"./Size/text()") |> List.first() |> to_integer(),
+            last_modified: node |> xpath_text(~c"./LastModified/text()") |> List.first()
+          }
+        end)
+
+      {:ok, objects, doc |> xpath_text(~c"//NextContinuationToken/text()") |> List.first()}
+    else
+      {:error, "listing was not XML: #{String.slice(body, 0, 200)}"}
+    end
+  end
+
+  defp xpath(node, path), do: :xmerl_xpath.string(path, node)
+
+  defp xpath_text(node, path) do
+    node
+    |> xpath(path)
+    |> Enum.map(fn {:xmlText, _, _, _, value, _} -> to_string(value) end)
+  end
+
+  defp to_integer(nil), do: nil
+  defp to_integer(text), do: String.to_integer(text)
+
+  defp object_path(bucket, ""), do: "/" <> bucket
+  defp object_path(bucket, object), do: "/" <> bucket <> "/" <> object
+
+  defp query_suffix(""), do: ""
+  defp query_suffix(query), do: "?" <> query
 
   # `:httpc` calls this with the accumulator until it answers `:eof`. The
   # accumulator is the open file itself, so nothing accrues between calls.
@@ -162,14 +248,15 @@ defmodule Depdep.S3 do
 
   defp empty_hash, do: :crypto.hash(:sha256, "") |> Base.encode16(case: :lower)
 
-  defp request(cfg, method, object, payload_hash, extra, http_opts, body \\ nil) do
+  defp request(cfg, method, object, payload_hash, extra, query, http_opts, body \\ nil) do
     # Encoded ONCE, and the same string is both requested and signed. Signature
     # v4 canonicalises the URI-encoded absolute path, and the request must carry
     # that same encoding — so encoding here and again inside `sign/5` made the
     # two disagree for any key holding a reserved character.
-    path = encode_path("/" <> cfg.bucket <> "/" <> object)
-    url = cfg.endpoint <> path
-    headers = sign(cfg, method, path, payload_hash, extra)
+    path = encode_path(object_path(cfg.bucket, object))
+    canonical_query = canonical_query(query)
+    url = cfg.endpoint <> path <> query_suffix(canonical_query)
+    headers = sign(cfg, method, path, canonical_query, payload_hash, extra)
     hdrs = Enum.map(headers, fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end)
 
     req =
@@ -187,7 +274,7 @@ defmodule Depdep.S3 do
 
   # ── AWS Signature v4 ──────────────────────────────────────────────────────
 
-  defp sign(cfg, method, path, payload_hash, extra) do
+  defp sign(cfg, method, path, canonical_query, payload_hash, extra) do
     now = DateTime.utc_now()
     amz_date = Calendar.strftime(now, "%Y%m%dT%H%M%SZ")
     datestamp = Calendar.strftime(now, "%Y%m%d")
@@ -211,7 +298,7 @@ defmodule Depdep.S3 do
         [
           method |> Atom.to_string() |> String.upcase(),
           path,
-          "",
+          canonical_query,
           Enum.map_join(canonical, "", fn {k, v} -> "#{k}:#{v}\n" end),
           signed,
           payload_hash
@@ -263,6 +350,32 @@ defmodule Depdep.S3 do
   #
   # The caller encodes once and signs the result. Do not call this again inside
   # the signer.
+  @doc """
+  The canonical query string: parameters sorted by name, each name and value
+  RFC3986-encoded, joined `k=v` with `&`.
+
+  Public because it is the half of the signature that is easiest to get wrong
+  and the only part testable without a store. The encoding is unforgiving in two
+  ways that matter here: a space is `%20` and never `+`, and `/` must be encoded
+  **in a value** even though it is left alone in a path. `continuation-token` is
+  opaque base64 that routinely contains `/`, `+` and `=`, so this is not a corner
+  case — it is the second page of every listing.
+
+  An empty parameter list yields an empty string, which is what the verbs that
+  take no query sign, so their signatures are unchanged.
+  """
+  def canonical_query([]), do: ""
+
+  def canonical_query(params) do
+    params
+    |> Enum.sort_by(fn {name, _} -> name end)
+    |> Enum.map_join("&", fn {name, value} ->
+      encode_component(name) <> "=" <> encode_component(value)
+    end)
+  end
+
+  defp encode_component(value), do: URI.encode("#{value}", &URI.char_unreserved?/1)
+
   @doc """
   RFC3986-encodes an object path, per segment, leaving `/` alone.
 
