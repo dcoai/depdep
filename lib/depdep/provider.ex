@@ -100,6 +100,12 @@ defmodule Depdep.Provider do
     end
   end
 
+  @doc "The name a provider module answers to, for object paths and messages."
+  def name(module) do
+    {name, _} = Enum.find(@providers, fn {_, mod} -> mod == module end)
+    name
+  end
+
   @doc "The provider names this build understands."
   def known, do: @providers |> Map.keys() |> Enum.sort() |> Enum.join(", ")
 end
