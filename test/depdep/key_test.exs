@@ -115,4 +115,73 @@ defmodule Depdep.KeyTest do
              )
     end
   end
+
+  # A git lock entry carries url, ref and opts and no child list, so its closure
+  # was unknowable and it — and everything above it — was skipped.
+  # `Depdep.Graph` supplies the edges Mix already resolved.
+  describe "git dependencies, given Mix's resolved graph" do
+    defp keys_with_graph(lock, graph) do
+      {:ok, keys} = Depdep.Key.compute(Map.new(lock), %{}, toolchain(), graph)
+      keys
+    end
+
+    test "are skipped without a graph, exactly as before" do
+      lock = [git("forked"), hex("spark", "2.6.0", [])]
+      assert {:skip, reason} = key(lock, "forked")
+      assert reason =~ "git"
+    end
+
+    test "are keyed with one" do
+      lock = [git("forked"), hex("spark", "2.6.0", [])]
+      keys = keys_with_graph(lock, %{"forked" => ["spark"]})
+
+      assert {:key, hash} = keys["forked"]
+      assert is_binary(hash)
+    end
+
+    # The whole reason a sha-only key would be wrong, and the same argument the
+    # recursion exists for: spark's macros expand into the fork's beams, so its
+    # correct bytecode moves while its ref does not.
+    test "bumping a hex dependency OF a git dependency changes the git dependency's key" do
+      graph = %{"forked" => ["spark"]}
+      before = keys_with_graph([git("forked"), hex("spark", "2.6.0", [])], graph)
+      later = keys_with_graph([git("forked"), hex("spark", "2.7.0", [])], graph)
+
+      refute before["forked"] == later["forked"]
+    end
+
+    test "an unrelated bump leaves a git dependency's key alone" do
+      graph = %{"forked" => ["spark"]}
+
+      before =
+        keys_with_graph(
+          [git("forked"), hex("spark", "2.6.0", []), hex("jason", "1.4.4", [])],
+          graph
+        )
+
+      later =
+        keys_with_graph(
+          [git("forked"), hex("spark", "2.6.0", []), hex("jason", "1.4.5", [])],
+          graph
+        )
+
+      assert before["forked"] == later["forked"]
+    end
+
+    # The skip used to propagate to everything above a git dependency, which is
+    # what made one badly-placed fork disable caching for a whole cone.
+    test "a dependent of a keyable git dependency is itself keyable" do
+      lock = [hex("app", "1.0.0", ["forked"]), git("forked"), hex("spark", "2.6.0", [])]
+      keys = keys_with_graph(lock, %{"forked" => ["spark"]})
+
+      assert {:key, _} = keys["app"]
+      assert {:key, _} = keys["forked"]
+    end
+
+    test "a dependent is still skipped when the git dependency cannot be keyed" do
+      lock = [hex("app", "1.0.0", ["forked"]), git("forked")]
+      assert {:skip, reason} = key(lock, "app")
+      assert reason =~ "forked"
+    end
+  end
 end
