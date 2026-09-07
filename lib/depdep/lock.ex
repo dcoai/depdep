@@ -54,7 +54,9 @@ defmodule Depdep.Lock do
   opts — so their closure is unknowable from here and they are reported as such
   rather than guessed at.
   """
-  def children(entry) when elem(entry, 0) == :hex do
+  def children(entry, graph \\ %{}, name \\ nil)
+
+  def children(entry, _graph, _name) when elem(entry, 0) == :hex do
     entry
     |> elem(5)
     |> Enum.map(fn {app, _requirement, opts} ->
@@ -63,10 +65,45 @@ defmodule Depdep.Lock do
     |> Enum.sort()
   end
 
-  def children(_entry), do: :unknown
+  # A git entry records url, ref and opts and no dependency list, so its closure
+  # is unknowable from here alone. `Depdep.Graph` supplies the edges Mix already
+  # resolved; without them this stays `:unknown` and the dependency is skipped,
+  # which is the fail-safe direction it has always been.
+  #
+  # Optionality is not carried, and does not need to be: an unresolved optional
+  # child has no edge, so it is absent from this list exactly as it would be
+  # absent from a hex entry's resolved set, and the key differs accordingly.
+  def children(entry, graph, name) when elem(entry, 0) == :git do
+    case Map.fetch(graph, name) do
+      {:ok, children} -> children |> Enum.map(&{&1, false}) |> Enum.sort()
+      :error -> :unknown
+    end
+  end
+
+  def children(_entry, _graph, _name), do: :unknown
 
   def hex?(entry), do: elem(entry, 0) == :hex
+
   def version(entry) when elem(entry, 0) == :hex, do: elem(entry, 2)
+
+  # The tag names the version a human pinned; the sha is the fallback when a ref
+  # was pinned directly.
+  def version(entry) when elem(entry, 0) == :git do
+    case Keyword.get(elem(entry, 3), :tag) do
+      nil -> elem(entry, 2)
+      tag -> tag
+    end
+  end
+
   def inner_checksum(entry) when elem(entry, 0) == :hex, do: elem(entry, 3)
+
+  # The ref sha IS the content identity, and a stronger one than hex's checksum:
+  # it names the exact tree, not a package tarball someone assembled from it.
+  def inner_checksum(entry) when elem(entry, 0) == :git, do: elem(entry, 2)
+
   def build_tools(entry) when elem(entry, 0) == :hex, do: entry |> elem(4) |> inspect()
+
+  # A git entry does not record its build tools. Constant rather than absent, so
+  # the key composition is the same shape for both kinds.
+  def build_tools(entry) when elem(entry, 0) == :git, do: "git"
 end

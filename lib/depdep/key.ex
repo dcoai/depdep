@@ -87,19 +87,19 @@ defmodule Depdep.Key do
   produce a cycle, so this is a guard against a malformed lock rather than an
   expected state — but the alternative is a hang with no explanation.
   """
-  def compute(lock, config, toolchain) do
+  def compute(lock, config, toolchain, graph \\ %{}) do
     lock
     |> Map.keys()
     |> Enum.sort()
     |> Enum.reduce_while({:ok, %{}}, fn name, {:ok, acc} ->
-      case resolve(name, lock, config, toolchain, acc, MapSet.new()) do
+      case resolve(name, lock, config, toolchain, acc, MapSet.new(), graph) do
         {:ok, acc} -> {:cont, {:ok, acc}}
         {:error, e} -> {:halt, {:error, e}}
       end
     end)
   end
 
-  defp resolve(name, lock, config, toolchain, acc, visiting) do
+  defp resolve(name, lock, config, toolchain, acc, visiting, graph) do
     cond do
       Map.has_key?(acc, name) ->
         {:ok, acc}
@@ -109,12 +109,22 @@ defmodule Depdep.Key do
 
       true ->
         entry = Map.fetch!(lock, name)
-        resolve_entry(name, entry, lock, config, toolchain, acc, MapSet.put(visiting, name))
+
+        resolve_entry(
+          name,
+          entry,
+          lock,
+          config,
+          toolchain,
+          acc,
+          MapSet.put(visiting, name),
+          graph
+        )
     end
   end
 
-  defp resolve_entry(name, entry, lock, config, toolchain, acc, visiting) do
-    case Depdep.Lock.children(entry) do
+  defp resolve_entry(name, entry, lock, config, toolchain, acc, visiting, graph) do
+    case Depdep.Lock.children(entry, graph, name) do
       :unknown ->
         {:ok, Map.put(acc, name, {:skip, "git dependency — the lock carries no dependency list"})}
 
@@ -122,7 +132,7 @@ defmodule Depdep.Key do
         present = Enum.filter(children, fn {child, _opt} -> Map.has_key?(lock, child) end)
 
         case Enum.reduce_while(present, {:ok, acc}, fn {child, _}, {:ok, acc} ->
-               case resolve(child, lock, config, toolchain, acc, visiting) do
+               case resolve(child, lock, config, toolchain, acc, visiting, graph) do
                  {:ok, acc} -> {:cont, {:ok, acc}}
                  {:error, e} -> {:halt, {:error, e}}
                end
