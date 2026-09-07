@@ -295,6 +295,9 @@ variables:
   APT_PACKAGES: "libsodium-dev imagemagick"
 
 script:
+  # Debian images delete each .deb as it installs. Without this, --push finds
+  # an empty directory and the store never warms.
+  - rm -f /etc/apt/apt.conf.d/docker-clean
   - apt-get update
   - elixir scripts/depdep.exs --pull --provider apt ${APT_PACKAGES// / --package }
   - apt-get install -y $APT_PACKAGES
@@ -312,6 +315,14 @@ script:
   `--print-uris` reports nothing, because apt has nothing left to fetch.
 - **Run `apt-get update` first.** Without a package index apt cannot resolve
   anything, and depdep will say so and restore nothing rather than guess.
+- **Delete `/etc/apt/apt.conf.d/docker-clean` before installing.** Debian's
+  images ship it, and it deletes every `.deb` as it is installed — so `--push`
+  finds an empty archives directory, uploads nothing, and the store never warms.
+  Nothing fails; it simply looks as though the provider does not work. Setting
+  `APT::Keep-Downloaded-Packages "true"` does the same job.
+- **`git` cannot be one of the packages depdep serves you.** `Mix.install`
+  clones depdep, so git has to be in the image already — it is needed before
+  depdep can bootstrap at all, let alone restore anything.
 - **Depdep must run in the same container as the `apt-get install` it serves.**
   That is what makes `--print-uris` trustworthy: it is apt, in the environment
   that will do the installing, reporting exactly what it would fetch. Run it
