@@ -34,15 +34,20 @@ defmodule Depdep.Archive do
   @doc """
   The two trees an object carries, relative to the project directory.
 
+  `build_path` is where this member actually compiles, which is `_build/<env>`
+  for almost everyone and is not for a project that sets `build_path` in its
+  `mix.exs`. See `Depdep.BuildPath` — assuming the common case here meant
+  restoring into a directory Mix never read, silently.
+
   Returned rather than inlined so `--pull` and `--push` cannot disagree about
   what an object contains.
   """
-  def trees(name, env),
-    do: [Path.join("deps", name), Path.join(["_build", to_string(env), "lib", name])]
+  def trees(name, build_path),
+    do: [Path.join("deps", name), Path.join([build_path, "lib", name])]
 
   @doc "Files are added in sorted order so the archive is a function of its contents."
-  def create(project_dir, name, env, dest),
-    do: create_trees(project_dir, trees(name, env), dest, name)
+  def create(project_dir, name, build_path, dest),
+    do: create_trees(project_dir, trees(name, build_path), dest, name)
 
   @doc """
   Tars `trees` — paths relative to `base_dir` — into `dest`.
@@ -98,6 +103,6 @@ defmodule Depdep.Archive do
   end
 
   @doc "Both trees present? A half-present dependency is treated as absent."
-  def complete?(project_dir, name, env),
-    do: name |> trees(env) |> Enum.all?(&File.dir?(Path.join(project_dir, &1)))
+  def complete?(project_dir, name, build_path),
+    do: name |> trees(build_path) |> Enum.all?(&File.dir?(Path.join(project_dir, &1)))
 end

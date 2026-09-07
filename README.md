@@ -223,6 +223,19 @@ Depdep's poncho case is for members that deliberately *cannot* share a build:
 independent dependency sets, members on different toolchains, or a boundary
 between them that has to stay real.
 
+**Where a member compiles to is asked of the member, not assumed.** Almost every
+project builds into `_build/<env>`, and depdep used to take that literally. A
+project that sets `build_path` in its `mix.exs` — because two variants cannot
+share one build, say — compiles elsewhere, and depdep would restore into a
+directory Mix never reads: a restore *and* a full compile, with nothing
+reporting a problem. It now asks `Mix.Project` for each member's build path, so
+`build_path: "_build/sqlite"` is found and used.
+
+The build path is deliberately **not** part of any key. Identical bytecode does
+not depend on the directory it was written to, so two variants of a project that
+differ only in where they build share their dependency objects, which is the
+point.
+
 Two options for when the default is wrong:
 
 ```sh
