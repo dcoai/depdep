@@ -245,10 +245,23 @@ a bug worth reporting.
   compiles them and `--push` stores the result. On the next pipeline they move
   into `pulled`, and `uploaded` falls to 0. **`uploaded 0` is the converged
   steady state, not a failure to write.**
-- **`already present N`** is a `--pull` that found both trees already on disk
-  and did nothing. In CI this is 0, because the checkout is empty. On a
-  developer's machine with a warm `_build` it is where nearly everything lands
-  — that is a no-op, and the expected reading, not a problem.
+- **`already present N`** is a `--pull` that found the dependency already on
+  disk **and confirmed it is the right one**, so it did nothing. In CI this is 0,
+  because the checkout is empty. On a developer's machine with a warm `_build`
+  it is where nearly everything lands — a no-op, and the expected reading.
+
+  Depdep records the key each tree was built or restored for, beside the build
+  in `_build/<env>/.depdep/`, and compares it. Presence alone would not do:
+  after a version bump both directories still exist, so a presence check skips
+  the pull, `mix deps.get` writes the new source over the old build, and Mix
+  recompiles — while the right object sits in the store, unrequested. That
+  happened, on an `ash 3.32.3 -> 3.33.0` bump, and is why the check is as
+  precise as the key.
+
+  **Upgrading to a version with this check re-pulls everything, once.** No keys
+  have been recorded yet, so the first run reports `pulled N` where it used to
+  report `already present N`. It is cheap — every one is a hit — and it does not
+  happen again.
 - **`not built here N`** is a `--push` with nothing to offer for that
   dependency, because this project has no `deps/` + `_build/` pair for it.
   Normally it means you pushed before the build, or the build never needed

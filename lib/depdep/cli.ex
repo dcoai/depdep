@@ -157,6 +157,7 @@ defmodule Depdep.CLI do
 
     case result do
       :ok ->
+        record(provider, unit)
         :pulled
 
       {:error, "not found"} ->
@@ -170,7 +171,11 @@ defmodule Depdep.CLI do
 
   defp reach(:offer, provider, unit, cfg) do
     case Depdep.S3.head(cfg, unit.object) do
+      # A hit is the steady state, and it is exactly when the local tree is known
+      # to match the key — so it must be noted here too. Noting only uploads
+      # would leave a warm tree unrecognised and re-pulled on the next run.
       :hit ->
+        record(provider, unit)
         :stored
 
       :miss ->
@@ -195,11 +200,25 @@ defmodule Depdep.CLI do
 
     case result do
       :ok ->
+        record(provider, unit)
         :uploaded
 
       {:error, reason} ->
         warn("#{Unit.label(unit)}: upload failed (#{reason}) — the store simply stays cold")
         :skipped
+    end
+  end
+
+  # Bookkeeping: a note that cannot be written is reported and otherwise ignored.
+  # Losing one costs a redundant pull next run; failing the build over it would
+  # cost far more.
+  defp record(provider, unit) do
+    case provider.record(unit) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        warn("#{Unit.label(unit)}: could not note the key (#{reason}) — it will be pulled again")
     end
   end
 

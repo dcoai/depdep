@@ -118,6 +118,13 @@ defmodule Depdep.Provider.Git do
     Depdep.Archive.extract(tmp, dir)
   end
 
+  # Nothing to note, for the reason the whole provider is built on: a stale
+  # mirror is not a wrong answer. It is a seed the consumer's own fetch
+  # reconciles against the real remote, so being out of date costs a larger
+  # delta and nothing else — there is no staleness here worth detecting.
+  @impl true
+  def record(%Unit{}), do: :ok
+
   @impl true
   def collect(%Unit{} = unit, tmp) do
     with :ok <- ensure_mirror(unit) do
