@@ -560,10 +560,36 @@ set it makes cheaper is precisely depdep's `missing N`.
 
 ## Status
 
-Extracted from `dco-tek/bizex`, where the original ran in CI: 148 stored
-objects, zero dependencies recompiled, pipeline ~28 minutes to 6m24s.
+**Running.** `dco-tek/metresis` uses the store in CI, and found two of the
+defects fixed in v0.3.0 — the 403 on any key holding a reserved character, and a
+`build_path` that made depdep serve a directory Mix never reads. Adoption
+proposals are open for `dco-tek/bizex` (#31 there), `dco-tek/extc` (#154) and
+`dco-tek/agentronic` (#2007). bizex still runs the 1,146-line script this package
+was extracted from.
 
-The extraction is verified against that live store — the same eleven projects
-compute **564 byte-identical keys**, and every one of the 148 objects already in
-the store is one this code asks for. `dco-tek/bizex` has not yet been converted
-to consume the package; that is filed there.
+**Measured.** Extracted from bizex, where the original ran in CI: 148 stored
+objects, zero dependencies recompiled, pipeline ~28 minutes to 6m24s. The
+extraction is verified against that live store — the same eleven projects compute
+**564 byte-identical keys**, and every one of the 148 objects already there is one
+this code asks for. That remains the best evidence the key rules are right.
+
+A restored git mirror measured 2.43 s cold against 0.57 s on a 7.4 MB repository,
+over the network.
+
+**Not measured, and worth knowing before relying on it.** Three things shipped
+with their acceptance criteria unmet, because no store and no root shell were
+reachable from where the work was done:
+
+- **The concurrency figure is synthetic.** 200 objects, 4.40 s to 0.16 s, against
+  a local socket with injected latency. That isolates whether transfers overlap
+  and nothing else — no TLS, no real object sizes, no tar extraction competing
+  for CPU. It is an upper bound, not a prediction; real objects average ~1.1 MiB,
+  so transfer is a larger share of each request and the speedup will be smaller.
+  Issue #12 says what to run.
+- **Nothing has watched `apt-get install` consume a restored `.deb`.** The
+  filename and checksum are tested against a real apt, and the last link — that
+  apt then uses the file rather than re-fetching it — needs root. Issue #14
+  carries the one-job check.
+- **Reclamation has never run against a real bucket.** The rules are tested and
+  the S3 verbs are exercised over a socket, but no `--report` or `--sweep` has
+  seen a live store.
