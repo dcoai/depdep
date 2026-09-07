@@ -30,7 +30,14 @@ defmodule Depdep.Provider.Mix do
     |> Enum.reduce({[], notes}, fn project, {units, warnings} ->
       case Depdep.keys_for(root, project, env) do
         {:ok, keys, lock} ->
-          {units ++ units_for(root, project, env, keys, lock, direction), warnings}
+          case Depdep.BuildPath.for_project(Path.join(root, project), env) do
+            {:ok, build_path} ->
+              {units ++ units_for(root, project, env, keys, lock, direction, build_path),
+               warnings}
+
+            {:error, reason} ->
+              {units, warnings ++ ["#{project}: #{reason} — skipping it"]}
+          end
 
         {:error, reason} ->
           {units, warnings ++ ["#{project}: #{reason} — every dependency will be compiled"]}
@@ -39,7 +46,7 @@ defmodule Depdep.Provider.Mix do
     |> then(fn {units, warnings} -> {:ok, units, warnings} end)
   end
 
-  defp units_for(root, project, env, keys, lock, direction) do
+  defp units_for(root, project, env, keys, lock, direction, build_path) do
     project_dir = Path.join(root, project)
 
     keys
@@ -53,7 +60,13 @@ defmodule Depdep.Provider.Mix do
         detail: detail(entry, resolution),
         resolution: resolution,
         object: object(name, entry, resolution),
-        context: %{project_dir: project_dir, name: name, env: env, direction: direction}
+        context: %{
+          project_dir: project_dir,
+          name: name,
+          env: env,
+          direction: direction,
+          build_path: build_path
+        }
       }
     end)
   end
@@ -93,16 +106,16 @@ defmodule Depdep.Provider.Mix do
   def present?(%Unit{resolution: {:key, hash}} = unit),
     do: trees?(unit) and recorded_key(unit) == hash
 
-  defp trees?(%Unit{context: %{project_dir: dir, name: name, env: env}}),
-    do: Depdep.Archive.complete?(dir, name, env)
+  defp trees?(%Unit{context: %{project_dir: dir, name: name, build_path: build_path}}),
+    do: Depdep.Archive.complete?(dir, name, build_path)
 
   @impl true
   def restore(%Unit{context: %{project_dir: dir}}, tmp),
     do: Depdep.Archive.extract(tmp, dir)
 
   @impl true
-  def collect(%Unit{context: %{project_dir: dir, name: name, env: env}}, tmp),
-    do: Depdep.Archive.create(dir, name, env, tmp)
+  def collect(%Unit{context: %{project_dir: dir, name: name, build_path: build_path}}, tmp),
+    do: Depdep.Archive.create(dir, name, build_path, tmp)
 
   @impl true
   def record(%Unit{resolution: {:skip, _reason}}), do: :ok
@@ -129,6 +142,9 @@ defmodule Depdep.Provider.Mix do
   # object exactly what `mix compile` produced, and keeps `collect/2` from
   # writing into a tree it is only supposed to read. It still lives under
   # `_build`, so everything that cleans a build cleans it too.
-  defp note_path(%Unit{context: %{project_dir: dir, name: name, env: env}}),
-    do: Path.join([dir, "_build", to_string(env), ".depdep", name])
+  # Beside the build, wherever the build is — so the note moves with the object.
+  # Left at `_build/<env>` while the trees moved, every pull would miss forever
+  # and the key check would silently stop working.
+  defp note_path(%Unit{context: %{project_dir: dir, name: name, build_path: build_path}}),
+    do: Path.join([dir, build_path, ".depdep", name])
 end

@@ -12,17 +12,17 @@ defmodule Depdep.ArchiveTest do
   use ExUnit.Case, async: true
 
   test "an object carries deps/ source as well as the _build tree" do
-    assert Depdep.Archive.trees("ash", :test) == ["deps/ash", "_build/test/lib/ash"]
+    assert Depdep.Archive.trees("ash", "_build/test") == ["deps/ash", "_build/test/lib/ash"]
   end
 
   test "a dependency with a build but no source counts as absent" do
     dir = tmp_dir()
     File.mkdir_p!(Path.join(dir, "_build/test/lib/ash"))
 
-    refute Depdep.Archive.complete?(dir, "ash", :test)
+    refute Depdep.Archive.complete?(dir, "ash", "_build/test")
 
     File.mkdir_p!(Path.join(dir, "deps/ash"))
-    assert Depdep.Archive.complete?(dir, "ash", :test)
+    assert Depdep.Archive.complete?(dir, "ash", "_build/test")
   end
 
   test "a round trip through an archive restores both trees" do
@@ -33,13 +33,13 @@ defmodule Depdep.ArchiveTest do
     File.write!(Path.join(source, "_build/test/lib/ash/ebin/Elixir.Ash.beam"), "beam")
 
     tar = Path.join(System.tmp_dir!(), "depdep-test-#{unique()}.tar.gz")
-    assert :ok = Depdep.Archive.create(source, "ash", :test, tar)
+    assert :ok = Depdep.Archive.create(source, "ash", "_build/test", tar)
 
     dest = tmp_dir()
     assert :ok = Depdep.Archive.extract(tar, dest)
     File.rm(tar)
 
-    assert Depdep.Archive.complete?(dest, "ash", :test)
+    assert Depdep.Archive.complete?(dest, "ash", "_build/test")
     assert File.read!(Path.join(dest, "deps/ash/lib/ash.ex")) == "defmodule Ash do end"
     assert File.read!(Path.join(dest, "_build/test/lib/ash/ebin/Elixir.Ash.beam")) == "beam"
   end
@@ -49,7 +49,7 @@ defmodule Depdep.ArchiveTest do
              Depdep.Archive.create(
                tmp_dir(),
                "absent",
-               :test,
+               "_build/test",
                Path.join(System.tmp_dir!(), "x.tar.gz")
              )
   end
@@ -100,7 +100,7 @@ defmodule Depdep.ArchiveTest do
       tmp = Path.join(System.tmp_dir!(), "depdep-mt-#{System.unique_integer([:positive])}.tar.gz")
       on_exit(fn -> File.rm(tmp) end)
 
-      assert Depdep.Archive.create(ctx.dir, "forked", :test, tmp) == :ok
+      assert Depdep.Archive.create(ctx.dir, "forked", "_build/test", tmp) == :ok
 
       # What `mix deps.get` does: rewrite the source, now newer than the
       # manifest. Left alone, Mix would call the dependency stale.
