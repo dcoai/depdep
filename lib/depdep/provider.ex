@@ -62,6 +62,25 @@ defmodule Depdep.Provider do
   @doc "Write what is on disk for this unit into `tmp`, ready to be stored."
   @callback collect(Unit.t(), Path.t()) :: :ok | {:error, String.t()}
 
+  @doc """
+  Note that what is on disk for this unit now corresponds to its key.
+
+  Called wherever depdep has just established that — after a restore, and on a
+  push whether the object was already stored or has just been uploaded. It
+  exists so `c:present?/1` can be as precise as the key rather than merely
+  checking that *something* is there, which cannot tell a stale tree from a
+  current one.
+
+  **A provider whose `c:present?/1` is already exact should implement this as a
+  no-op and say why**, rather than leaving the reader to work out that it does
+  not need one. Two of the three here are in that position for quite different
+  reasons.
+
+  Bookkeeping, so a failure is reported and otherwise ignored: not being able to
+  write a note must never fail a build or lose a hit.
+  """
+  @callback record(Unit.t()) :: :ok | {:error, String.t()}
+
   @providers %{
     "mix" => Depdep.Provider.Mix,
     "apt" => Depdep.Provider.Apt,

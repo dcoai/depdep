@@ -22,6 +22,7 @@ defmodule Depdep.Provider.Mix do
   def enumerate(opts) do
     root = Keyword.fetch!(opts, :root)
     env = Keyword.fetch!(opts, :env)
+    direction = Keyword.get(opts, :direction, :pull)
 
     {projects, notes} = Depdep.Layout.projects(root, opts)
 
@@ -29,7 +30,7 @@ defmodule Depdep.Provider.Mix do
     |> Enum.reduce({[], notes}, fn project, {units, warnings} ->
       case Depdep.keys_for(root, project, env) do
         {:ok, keys, lock} ->
-          {units ++ units_for(root, project, env, keys, lock), warnings}
+          {units ++ units_for(root, project, env, keys, lock, direction), warnings}
 
         {:error, reason} ->
           {units, warnings ++ ["#{project}: #{reason} — every dependency will be compiled"]}
@@ -38,7 +39,7 @@ defmodule Depdep.Provider.Mix do
     |> then(fn {units, warnings} -> {:ok, units, warnings} end)
   end
 
-  defp units_for(root, project, env, keys, lock) do
+  defp units_for(root, project, env, keys, lock, direction) do
     project_dir = Path.join(root, project)
 
     keys
@@ -52,7 +53,7 @@ defmodule Depdep.Provider.Mix do
         detail: detail(entry, resolution),
         resolution: resolution,
         object: object(name, entry, resolution),
-        context: %{project_dir: project_dir, name: name, env: env}
+        context: %{project_dir: project_dir, name: name, env: env, direction: direction}
       }
     end)
   end
@@ -64,8 +65,35 @@ defmodule Depdep.Provider.Mix do
   defp detail(entry, {:key, _hash}), do: Depdep.Lock.version(entry)
   defp detail(_entry, {:skip, _reason}), do: "-"
 
+  @doc """
+  Whether there is anything to do — and the two directions ask different
+  questions, which is not a nicety.
+
+  **Pull** asks "do I already have the RIGHT tree?". Presence alone cannot tell a
+  stale dependency from a current one: bump a version over a warm `_build` and
+  both directories still exist, so the pull is skipped, `mix deps.get` writes the
+  new source over the old build, and Mix recompiles — while the exact right
+  object sits in the store, unrequested. Measured in `dco-tek/bizex` on an
+  `ash 3.32.3 -> 3.33.0` bump: `pulled 0, missing 7, skipped 557`, 14
+  dependencies recompiled. So the pull compares the recorded key with the
+  computed one.
+
+  **Push** asks "is there a tree here to upload?", and must NOT consider the key.
+  A locally built tree that was never restored has no note; requiring one here
+  would make `Depdep.Report.outcome(:push, _, false)` report `not built here` for
+  every dependency and upload nothing, forever, silently.
+  """
   @impl true
-  def present?(%Unit{context: %{project_dir: dir, name: name, env: env}}),
+  # Called before `Depdep.Report.outcome/3` decides anything, so it is reached
+  # for skipped units too. Its value is unused for those.
+  def present?(%Unit{resolution: {:skip, _reason}}), do: false
+
+  def present?(%Unit{context: %{direction: :push}} = unit), do: trees?(unit)
+
+  def present?(%Unit{resolution: {:key, hash}} = unit),
+    do: trees?(unit) and recorded_key(unit) == hash
+
+  defp trees?(%Unit{context: %{project_dir: dir, name: name, env: env}}),
     do: Depdep.Archive.complete?(dir, name, env)
 
   @impl true
@@ -75,4 +103,32 @@ defmodule Depdep.Provider.Mix do
   @impl true
   def collect(%Unit{context: %{project_dir: dir, name: name, env: env}}, tmp),
     do: Depdep.Archive.create(dir, name, env, tmp)
+
+  @impl true
+  def record(%Unit{resolution: {:skip, _reason}}), do: :ok
+
+  def record(%Unit{resolution: {:key, hash}} = unit) do
+    path = note_path(unit)
+    File.mkdir_p!(Path.dirname(path))
+
+    case File.write(path, hash) do
+      :ok -> :ok
+      {:error, reason} -> {:error, :file.format_error(reason)}
+    end
+  end
+
+  defp recorded_key(unit) do
+    case File.read(note_path(unit)) do
+      {:ok, hash} -> String.trim(hash)
+      {:error, _} -> nil
+    end
+  end
+
+  # Beside the build, never inside it. `Depdep.Archive.trees/2` does not cover
+  # this path, so the note is never tarred into an object — which keeps a stored
+  # object exactly what `mix compile` produced, and keeps `collect/2` from
+  # writing into a tree it is only supposed to read. It still lives under
+  # `_build`, so everything that cleans a build cleans it too.
+  defp note_path(%Unit{context: %{project_dir: dir, name: name, env: env}}),
+    do: Path.join([dir, "_build", to_string(env), ".depdep", name])
 end

@@ -112,13 +112,17 @@ defmodule Depdep.Provider.MixTest do
       %{dir: dir, unit: by_name["jason"]}
     end
 
-    test "present? sees both trees", %{unit: unit} do
+    test "present? needs the key recorded, not just the trees", %{unit: unit} do
+      refute Provider.Mix.present?(unit), "trees alone are not proof the tree is current"
+
+      assert Provider.Mix.record(unit) == :ok
       assert Provider.Mix.present?(unit)
     end
 
     # Half a dependency is worse than none: Mix would treat the restored build
     # as current and then recompile the moment `deps.get` refreshed the source.
     test "present? is false when only the build tree survives", %{dir: dir, unit: unit} do
+      assert Provider.Mix.record(unit) == :ok
       File.rm_rf!(Path.join([dir, "deps", "jason"]))
       refute Provider.Mix.present?(unit)
     end
@@ -134,11 +138,82 @@ defmodule Depdep.Provider.MixTest do
       refute Provider.Mix.present?(unit)
 
       assert Provider.Mix.restore(unit, tmp) == :ok
+      assert Provider.Mix.record(unit) == :ok
       assert Provider.Mix.present?(unit)
       assert File.read!(Path.join([dir, "deps", "jason", "lib", "jason.ex"])) == "source"
 
       assert File.read!(Path.join([dir, "_build", "test", "lib", "jason", "ebin", "j.beam"])) ==
                "beam"
+    end
+
+    # The note must not travel inside the object. If it did, `collect/2` would be
+    # writing into a tree it is only supposed to read, and a stored object would
+    # differ from what `mix compile` produces.
+    test "the recorded key is never tarred into the object", %{unit: unit} do
+      tmp = Path.join(System.tmp_dir!(), "depdep-nt-#{System.unique_integer([:positive])}.tar.gz")
+      on_exit(fn -> File.rm(tmp) end)
+
+      assert Provider.Mix.record(unit) == :ok
+      assert Provider.Mix.collect(unit, tmp) == :ok
+
+      {:ok, entries} = :erl_tar.table(String.to_charlist(tmp), [:compressed])
+      names = Enum.map(entries, &to_string/1)
+
+      refute Enum.any?(names, &String.contains?(&1, ".depdep")), inspect(names)
+    end
+  end
+
+  # The defect this work item exists for, from dco-tek/bizex: an `ash` bump over
+  # a warm `_build` left both directories in place, so the pull was skipped, and
+  # Mix recompiled against source it had just fetched — while the right object
+  # sat in the store, unrequested.
+  describe "a stale tree" do
+    setup %{root: root, by_name: by_name} do
+      dir = Path.join(root, "app")
+      File.mkdir_p!(Path.join([dir, "deps", "jason"]))
+      File.mkdir_p!(Path.join([dir, "_build", "test", "lib", "jason"]))
+      %{dir: dir, unit: by_name["jason"]}
+    end
+
+    test "is not treated as present when the recorded key is a different one", ctx do
+      note = Path.join([ctx.dir, "_build", "test", ".depdep"])
+      File.mkdir_p!(note)
+      File.write!(Path.join(note, "jason"), "the key of some earlier version")
+
+      refute Provider.Mix.present?(ctx.unit)
+    end
+
+    # The first run after this shipped: no notes exist anywhere yet, so every
+    # dependency is fetched once. Safe direction, and cheap — they are all hits.
+    test "is not treated as present when nothing was recorded", ctx do
+      refute Provider.Mix.present?(ctx.unit)
+    end
+  end
+
+  # `present?/1` feeds BOTH directions, and a push must not consider the key: a
+  # locally built tree that was never restored has no note, and requiring one
+  # would make `--push` report `not built here` for everything and upload
+  # nothing, forever, silently.
+  describe "the push direction" do
+    setup %{root: root} do
+      dir = Path.join(root, "app")
+      File.mkdir_p!(Path.join([dir, "deps", "jason"]))
+      File.mkdir_p!(Path.join([dir, "_build", "test", "lib", "jason"]))
+
+      {:ok, units, []} =
+        Provider.Mix.enumerate(root: root, env: :test, project: "app", direction: :push)
+
+      %{unit: Enum.find(units, &(&1.name == "jason"))}
+    end
+
+    test "offers a locally built tree that was never restored", %{unit: unit} do
+      assert Provider.Mix.present?(unit)
+    end
+  end
+
+  describe "record/1" do
+    test "is a no-op for a dependency that cannot be keyed", %{by_name: by_name} do
+      assert Provider.Mix.record(by_name["forked"]) == :ok
     end
   end
 end

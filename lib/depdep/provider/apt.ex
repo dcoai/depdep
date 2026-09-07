@@ -203,6 +203,14 @@ defmodule Depdep.Provider.Apt do
     end
   end
 
+  # Nothing to note. This provider's `present?/1` is ALREADY exact: an apt
+  # object's key IS its filename, and that filename encodes the package version
+  # and architecture — so a file being there is proof it is the right file, and
+  # there is no stale-versus-current distinction to lose. Contrast the mix
+  # provider, where two different builds of a dependency share a directory name.
+  @impl true
+  def record(%Unit{}), do: :ok
+
   @impl true
   def collect(%Unit{context: %{dir: dir, filename: filename}}, tmp) do
     case File.cp(Path.join(dir, filename), tmp) do
