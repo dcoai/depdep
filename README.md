@@ -160,10 +160,23 @@ wrong. If depdep is public on your instance, skip all of this and use the plain
 script:
   - elixir scripts/depdep.exs --pull     # restore what the store has
   - mix deps.get                         # fetch only what it did not
+  - elixir scripts/depdep.exs --pull     # git dependencies, now resolvable
   - mix compile
   - mix test
   - elixir scripts/depdep.exs --push     # upload what the store lacked
 ```
+
+**Pull twice if you have git dependencies, and skip the second if you do not.**
+A git lock entry records url, ref and opts and no dependency list, so before
+`mix deps.get` there is no way to know what it depends on — and since a
+dependency's compiled output is a function of its dependencies', it cannot be
+keyed, and neither can anything above it. One badly-placed fork disables caching
+for its whole cone.
+
+After `deps.get` the source is on disk and Mix has resolved the graph, so the
+second pull asks Mix for it and keys those dependencies properly. It costs a stat
+per dependency the first pull already restored — they report as `already present`
+— and buys the cone back.
 
 **Pull *before* `mix deps.get`, not after.** This is the one ordering mistake
 that looks like it works and is not. A stored object carries both the compiled
@@ -173,6 +186,11 @@ the restored build manifests, finds everything stale, and rebuilds all of it —
 you get a perfect restore followed by a full recompile, and a pipeline *slower*
 than having no store at all. Measured, on the way to getting this right: 16 of
 16 dependencies restored, 16 recompiled, 9% slower than no store.
+
+The same reasoning is why the second pull is safe when a pull after `deps.get`
+would otherwise be the mistake above: an object carries **both** trees, and
+`erl_tar` restores the recorded mtimes, so extracting over freshly fetched source
+puts the build back ahead of it. That is asserted by a test rather than argued.
 
 Put `--push` after the build succeeds, so a failed build cannot populate the
 store. It uploads only what is missing; anything restored above is a HEAD hit

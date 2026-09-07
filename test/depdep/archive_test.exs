@@ -63,4 +63,57 @@ defmodule Depdep.ArchiveTest do
 
   defp on_exit_rm(dir), do: ExUnit.Callbacks.on_exit(fn -> File.rm_rf(dir) end)
   defp unique, do: :erlang.unique_integer([:positive])
+
+  # The failure the README documents at 9% slower than having no store at all:
+  # `mix deps.get` writes source with fresh mtimes, a restored build manifest
+  # looks older than it, Mix finds every dependency stale, and recompiles — a
+  # perfect restore followed by a full rebuild.
+  #
+  # It is also the objection that made a SECOND pull after `deps.get` look
+  # impossible, and the reason it does not apply is that an object carries BOTH
+  # trees and `:erl_tar` restores recorded mtimes. That is an argument until it
+  # is a test.
+  describe "restoring over freshly fetched source" do
+    setup do
+      dir = Path.join(System.tmp_dir!(), "depdep-mtime-#{System.unique_integer([:positive])}")
+      source = Path.join([dir, "deps", "forked", "lib"])
+      build = Path.join([dir, "_build", "test", "lib", "forked", ".mix"])
+      File.mkdir_p!(source)
+      File.mkdir_p!(build)
+      on_exit(fn -> File.rm_rf!(dir) end)
+
+      source_file = Path.join(source, "forked.ex")
+      manifest = Path.join(build, "compile.elixir")
+      File.write!(source_file, "defmodule Forked do end")
+      File.write!(manifest, "manifest")
+
+      # As at build time: the manifest is written after the source it compiled.
+      old = ~N[2026-01-01 00:00:00] |> NaiveDateTime.to_erl()
+      newer = ~N[2026-01-01 00:05:00] |> NaiveDateTime.to_erl()
+      File.touch!(source_file, old)
+      File.touch!(manifest, newer)
+
+      %{dir: dir, source_file: source_file, manifest: manifest}
+    end
+
+    test "puts the archived mtimes back, so the manifest stays newer", ctx do
+      tmp = Path.join(System.tmp_dir!(), "depdep-mt-#{System.unique_integer([:positive])}.tar.gz")
+      on_exit(fn -> File.rm(tmp) end)
+
+      assert Depdep.Archive.create(ctx.dir, "forked", :test, tmp) == :ok
+
+      # What `mix deps.get` does: rewrite the source, now newer than the
+      # manifest. Left alone, Mix would call the dependency stale.
+      File.write!(ctx.source_file, "defmodule Forked do end")
+      File.touch!(ctx.source_file)
+      assert mtime(ctx.source_file) > mtime(ctx.manifest)
+
+      assert Depdep.Archive.extract(tmp, ctx.dir) == :ok
+
+      assert mtime(ctx.source_file) < mtime(ctx.manifest),
+             "restoring both trees must put the build back ahead of its source"
+    end
+
+    defp mtime(path), do: File.stat!(path, time: :posix).mtime
+  end
 end
