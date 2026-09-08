@@ -261,12 +261,15 @@ The output says what happened, in the terms that matter. A cold pipeline, then
 the push after the build that pipeline ran:
 
 ```
-depdep: pulled 555, missing 8, already present 0, skipped 1
-depdep: already stored 555, uploaded 8, not built here 0, skipped 1
+depdep: pulled 555, missing 8, already present 0, skipped 1 in 41.2s
+depdep: already stored 555, uploaded 8, not built here 0, skipped 1 in 18.7s
 ```
 
 Every bucket is printed even at zero, and the four **sum to the number of
-dependencies in your lock** — 564 here. That is the point of the shape: a
+dependencies in your lock** — 564 here. The time is depdep's own, covering the
+transfer and not the `Mix.install` that bootstrapped it: a consumer's job
+duration is a poor instrument, since the job around this one measured anywhere
+between 126 s and 532 s on identical code. That is the point of the shape: a
 number can be read as a count of packages, and a total that does not add up is
 a bug worth reporting.
 

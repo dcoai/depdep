@@ -79,6 +79,21 @@ defmodule Depdep.Report do
   @doc "How many dependencies a tally accounts for."
   def total(tally), do: tally |> Map.values() |> Enum.sum()
 
+  @doc """
+  How long a transfer took, for the summary line.
+
+  Exists because a consumer's job duration turned out to be a useless
+  instrument: `dco-tek/bizex`'s `checks` job, which pulls 556 objects, ranged
+  from 126 s to 532 s across six pipelines on identical code, because it also
+  runs `mix deps.get`, `mix format` and `mix hex.audit` per member against
+  hex.pm. The noise is several times anything depdep does. So depdep reports its
+  own cost rather than leaving it to be inferred.
+
+  Seconds to one decimal: greppable, and the same shape whether a run takes two
+  seconds or six minutes.
+  """
+  def duration(microseconds), do: "#{Float.round(microseconds / 1_000_000, 1)}s"
+
   @doc "The summary line, every bucket named and none omitted at zero."
   def render(direction, tally) do
     direction
