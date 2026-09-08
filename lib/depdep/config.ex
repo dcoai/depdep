@@ -14,6 +14,10 @@ defmodule Depdep.Config do
   `System.get_env/1`, its digest becomes machine-dependent and objects stop
   being portable between a developer's machine and CI. Values under your OWN
   apps may do as they like — they are not part of any dependency's key.
+
+  Config is evaluated with the member's `mix.exs` loaded (`Depdep.Member`), so
+  a config that calls into its own project module, or asks `Mix.Project` for the
+  build path, sees the member's answers rather than the current directory's.
   """
 
   @doc """
@@ -27,27 +31,18 @@ defmodule Depdep.Config do
     path = Path.join([project_dir, "config", "config.exs"])
 
     if File.exists?(path) do
-      prepare(env)
+      # `in_project` changes the working directory to the member's, so the path
+      # is made absolute before going in.
+      config = Path.expand(path)
 
-      path
-      |> Config.Reader.read!(env: env)
+      project_dir
+      |> Depdep.Member.ask(env, fn -> Config.Reader.read!(config, env: env) end)
       |> Map.new(fn {app, values} ->
         {Atom.to_string(app), Depdep.Key.digest([canonical(values, root)])}
       end)
     else
       %{}
     end
-  end
-
-  # Compile-time config may call into Mix — a `config/config.exs` that builds
-  # esbuild's NODE_PATH from `Mix.Project.build_path()` does. Under `elixir`
-  # rather than `mix` the Mix application is not running, so that call exits with
-  # a bare `no process` naming `Mix.ProjectStack` and nothing about config.
-  # Idempotent, so it costs nothing to call per project.
-  defp prepare(env) do
-    {:ok, _} = Application.ensure_all_started(:mix)
-    Mix.env(env)
-    :ok
   end
 
   @doc """

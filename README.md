@@ -231,6 +231,13 @@ directory Mix never reads: a restore *and* a full compile, with nothing
 reporting a problem. It now asks `Mix.Project` for each member's build path, so
 `build_path: "_build/sqlite"` is found and used.
 
+The same goes for `config/config.exs`: it is evaluated with the member's
+`mix.exs` loaded, so config that calls a function from its own project module
+— choosing an Ecto adapter, say — or asks `Mix.Project.build_path()` for
+esbuild's `NODE_PATH` sees the member's answers. Evaluated with no project
+loaded, the first raised and the second answered from whichever directory
+depdep was run from, which put the cwd into a key.
+
 The build path is deliberately **not** part of any key. Identical bytecode does
 not depend on the directory it was written to, so two variants of a project that
 differ only in where they build share their dependency objects, which is the
