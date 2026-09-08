@@ -149,8 +149,18 @@ defmodule Depdep.CLI do
         # are genuinely different questions.
         opts = Keyword.put(opts, :direction, direction)
 
-        tallies = Enum.map(providers, &transfer_provider(&1, opts, direction, cfg))
-        IO.puts("depdep: " <> Report.render(direction, Report.merge(tallies)))
+        # The clock starts where depdep starts working. `Mix.install` cloning
+        # and compiling depdep is the consumer's cost and varies with their
+        # runner's cache — folding it in would put back exactly the noise this
+        # number exists to remove.
+        {elapsed, tallies} =
+          :timer.tc(fn -> Enum.map(providers, &transfer_provider(&1, opts, direction, cfg)) end)
+
+        IO.puts(
+          "depdep: " <>
+            Report.render(direction, Report.merge(tallies)) <>
+            " in " <> Report.duration(elapsed)
+        )
     end
   end
 

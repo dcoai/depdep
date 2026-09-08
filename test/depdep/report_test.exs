@@ -60,6 +60,23 @@ defmodule Depdep.ReportTest do
     end
   end
 
+  describe "duration/1" do
+    test "seconds to one decimal" do
+      assert Report.duration(12_345_678) == "12.3s"
+      assert Report.duration(1_000_000) == "1.0s"
+    end
+
+    # The same shape whether a run takes two seconds or six minutes, so a log
+    # filter does not have to know about units.
+    test "does not change shape for a long run" do
+      assert Report.duration(372_400_000) == "372.4s"
+    end
+
+    test "a run too fast to measure still reports a number" do
+      assert Report.duration(0) == "0.0s"
+    end
+  end
+
   describe "merge/1" do
     test "sums the per-project tallies of one run" do
       merged = Report.merge([%{pulled: 3, skipped: 1}, %{pulled: 4}, %{missing: 2}])
