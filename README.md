@@ -120,10 +120,24 @@ your CI keeps those.
 | `DEPDEP_ACCESS_KEY` | `depdep` | required |
 | `DEPDEP_SECRET_KEY` | | required, keep it masked |
 | `DEPDEP_REGION` | `us-east-1` | optional, this is the default |
+| `DEPDEP_ENABLED` | `false` | optional, unset means enabled |
 
 **If any of them is unset, depdep says so and exits 0.** Nothing breaks; Mix
 compiles the dependency as it always would. You can wire depdep into a pipeline
 before the credentials exist and nothing will fail.
+
+**`DEPDEP_ENABLED=false` turns depdep off**, wherever your CI lets you set a
+variable — one job, one branch, one pipeline. It reports that it is off and
+exits 0 before reading your lockfile, your config or the store's credentials,
+so it is also the switch to reach for on a day when depdep itself is the
+suspect. Unset means enabled, so ignoring this variable is the same as never
+having heard of it.
+
+Its first use is measurement. Comparing a cached pipeline against a cold one
+used to mean unsetting `DEPDEP_ENDPOINT` — editing the store's configuration to
+take a reading, and remembering to put it back. A value that is neither `true`
+nor `false` is refused rather than guessed at, because a baseline quietly served
+from the store is worse than no baseline.
 
 ### 3. Add the bootstrap script
 
