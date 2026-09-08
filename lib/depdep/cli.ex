@@ -41,15 +41,77 @@ defmodule Depdep.CLI do
 
   def main(argv) do
     with {:ok, opts} <- parse(argv),
+         :run <- disposition(opts),
          {:ok, providers} <- Provider.resolve(Keyword.get_values(opts, :provider)) do
       run(providers, opts)
     else
+      :help ->
+        IO.puts(usage())
+
+      {:disabled, value} ->
+        # Not a warning: nothing went wrong, and this line IS the run's summary,
+        # so it belongs where the summary goes.
+        IO.puts("depdep: disabled by DEPDEP_ENABLED=#{value}")
+
       {:error, problems} ->
         problems |> List.wrap() |> Enum.each(&warn/1)
         warn("run with --help for the switches this version understands")
         System.halt(2)
     end
   end
+
+  # Help first, and before `enabled?/0`: `--help` is a request to read the
+  # documentation, so answering it with an exit code — because the environment
+  # holds a typo — is unhelpful at exactly the moment help was asked for.
+  defp disposition(opts) do
+    if opts[:help] do
+      :help
+    else
+      case enabled?() do
+        {:ok, true} -> :run
+        {:ok, false} -> {:disabled, System.get_env("DEPDEP_ENABLED")}
+        {:error, message} -> {:error, message}
+      end
+    end
+  end
+
+  @doc """
+  Whether depdep should do anything at all: `{:ok, boolean}`, or `{:error,
+  message}` for a value it cannot read.
+
+  **Unset means enabled**, so every consumer that ignores this variable is
+  unaffected, and an empty value means unset — a CI variable declared without
+  one is ordinary, and `Depdep.S3` already reads `""` that way.
+
+  `DEPDEP_ENABLED=false` exists because turning the store off used to mean
+  unsetting `DEPDEP_ENDPOINT`: editing the store's configuration to take a
+  measurement, and remembering to put it back. Two cases want it. The first is
+  the cold half of a before/after — the comparison #41 is open about, where a
+  baseline that was quietly served from the store is worse than no baseline. The
+  second is a pipeline where depdep is the suspect, which is why the check runs
+  before providers, credentials, `mix.lock` or `config/config.exs`: an off
+  switch that needs depdep to work is no use on the day depdep does not.
+
+  **An unreadable value fails.** This is the argument `parse/1` makes about an
+  unknown switch, and it is sharper here: the whole point of the switch is a
+  number someone will trust, so `DEPDEP_ENABLED=flase` quietly meaning "enabled"
+  would hand back a warm restore labelled as a cold build. Unlike a switch, this
+  can be inherited from a CI group, so a typo can stop more than the pipeline
+  being edited — a loud one-line fix, chosen over a silent wrong answer.
+  """
+  def enabled? do
+    case System.get_env("DEPDEP_ENABLED") do
+      nil -> {:ok, true}
+      value -> from_value(String.downcase(String.trim(value)))
+    end
+  end
+
+  defp from_value(""), do: {:ok, true}
+  defp from_value("true"), do: {:ok, true}
+  defp from_value("false"), do: {:ok, false}
+
+  defp from_value(other),
+    do: {:error, ~s(DEPDEP_ENABLED is "#{other}"; it takes "true" or "false")}
 
   @doc """
   `{:ok, opts}`, or `{:error, messages}` for anything not understood.
@@ -102,7 +164,6 @@ defmodule Depdep.CLI do
 
   defp run(providers, opts) do
     cond do
-      opts[:help] -> IO.puts(usage())
       opts[:plan] -> plan(providers, opts)
       opts[:report] -> report(opts)
       opts[:sweep] -> sweep(opts)
@@ -543,6 +604,10 @@ defmodule Depdep.CLI do
     Reads DEPDEP_ENDPOINT, DEPDEP_BUCKET, DEPDEP_ACCESS_KEY, DEPDEP_SECRET_KEY
     and optionally DEPDEP_REGION. With any of them unset, --pull and --push
     report why and do nothing.
+
+    DEPDEP_ENABLED=false turns depdep off: it reports that it is off and exits
+    0 without reading anything. Unset means enabled, so leaving it alone is the
+    same as never having heard of it.
     """
   end
 end
