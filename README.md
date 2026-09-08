@@ -140,7 +140,7 @@ url =
     token -> "https://gitlab-ci-token:#{token}@gitlab.example.com/group/depdep.git"
   end
 
-Mix.install([{:depdep, git: url, tag: "v0.1.0"}])
+Mix.install([{:depdep, git: url, tag: "v0.1.1"}])
 
 Depdep.CLI.main(System.argv())
 ```
@@ -564,7 +564,7 @@ set it makes cheaper is precisely depdep's `missing N`.
 ## Status
 
 **Running.** `dco-tek/metresis` uses the store in CI, and found two of the
-defects fixed in v0.3.0 — the 403 on any key holding a reserved character, and a
+defects fixed in v0.1.0 — the 403 on any key holding a reserved character, and a
 `build_path` that made depdep serve a directory Mix never reads. Adoption
 proposals are open for `dco-tek/bizex` (#31 there), `dco-tek/extc` (#154) and
 `dco-tek/agentronic` (#2007). bizex still runs the 1,146-line script this package
