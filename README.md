@@ -140,7 +140,7 @@ url =
     token -> "https://gitlab-ci-token:#{token}@gitlab.example.com/group/depdep.git"
   end
 
-Mix.install([{:depdep, git: url, tag: "v0.1.1"}])
+Mix.install([{:depdep, git: url, tag: "v0.1.2"}])
 
 Depdep.CLI.main(System.argv())
 ```
