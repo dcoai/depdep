@@ -5,7 +5,7 @@ defmodule Depdep.CLI do
   Invoked from a consumer's bootstrap script, which is how depdep runs before
   `mix deps.get` without being a dependency of the project it is serving:
 
-      Mix.install([{:depdep, git: "...", tag: "v0.1.2"}])
+      Mix.install([{:depdep, git: "...", tag: "v0.2.0"}])
       Depdep.CLI.main(System.argv())
 
   **Nothing below names an artifact type.** What is being moved, how it is keyed
