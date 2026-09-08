@@ -6,8 +6,14 @@ defmodule Depdep.Provider.MixTest do
   object already written becomes unreachable and every pipeline silently pays a
   full compile — with nothing failing to say so. So the provider is asserted
   against `Depdep.Key.object/3` directly rather than against itself.
+
+  `async: false`: enumerating a member asks Mix about it (`Depdep.Member`),
+  which pushes Mix's global project stack AND changes the VM's working
+  directory for the duration. A test in another module that spawns a
+  subprocess meanwhile inherits a fixture directory as its cwd, and finds it
+  deleted a moment later — seen as `getcwd() failed` inside a git clone in CI.
   """
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Depdep.{Provider, Unit}
 

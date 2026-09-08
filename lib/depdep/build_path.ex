@@ -14,9 +14,9 @@ defmodule Depdep.BuildPath do
   here` for all 49 dependencies because the place it looked was empty. **A
   restore and a full compile — the slow case — arrived at in silence.**
 
-  So ask Mix rather than assuming. `Mix.Project.in_project/4` runs the member's
-  own `mix.exs` in Mix's own context, which is the same answer #35 reached for
-  git dependencies: Mix is the authority on what a project says.
+  So ask Mix rather than assuming. `Depdep.Member.ask/3` runs the member's own
+  `mix.exs` in Mix's own context, which is the same answer #35 reached for git
+  dependencies: Mix is the authority on what a project says.
 
   ## This is a path, not a key
 
@@ -56,24 +56,12 @@ defmodule Depdep.BuildPath do
 
   # `Mix.Project.build_path/0` already includes the environment — it answers
   # `<dir>/_build/sqlite/test`, not `<dir>/_build/sqlite` — so the env is never
-  # appended here.
+  # appended here. A member without a `mix.exs` is entered all the same and
+  # answers Mix's default, which is the `_build/<env>` every other project uses.
   defp resolve(project_dir, env) do
     default = Path.expand(Path.join([project_dir, "_build", to_string(env)]))
 
-    if File.regular?(Path.join(project_dir, "mix.exs")) do
-      ask_mix(project_dir, env, default)
-    else
-      default
-    end
-  end
-
-  defp ask_mix(project_dir, env, default) do
-    {:ok, _} = Application.ensure_all_started(:mix)
-    Mix.env(env)
-
-    app = :"depdep_probe_#{:erlang.unique_integer([:positive])}"
-
-    case Mix.Project.in_project(app, project_dir, fn _module -> Mix.Project.build_path() end) do
+    case Depdep.Member.ask(project_dir, env, fn -> Mix.Project.build_path() end) do
       path when is_binary(path) -> path
       _ -> default
     end

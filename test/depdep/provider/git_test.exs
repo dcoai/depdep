@@ -149,14 +149,18 @@ defmodule Depdep.Provider.GitTest do
       checkout = Path.join(System.tmp_dir!(), "depdep-co-#{System.unique_integer([:positive])}")
       on_exit(fn -> File.rm_rf!(checkout) end)
 
-      git!([
-        "clone",
-        "--reference",
-        Git.mirror_path(restored),
-        "--dissociate",
-        ctx.source,
-        checkout
-      ])
+      # An explicit cwd: the VM's is shared state that another test can move.
+      git!(
+        [
+          "clone",
+          "--reference",
+          Git.mirror_path(restored),
+          "--dissociate",
+          ctx.source,
+          checkout
+        ],
+        cd: System.tmp_dir!()
+      )
 
       assert File.read!(Path.join(checkout, "README.md")) == "the source of truth\n"
     end
