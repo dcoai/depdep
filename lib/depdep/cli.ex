@@ -68,10 +68,25 @@ defmodule Depdep.CLI do
       :help
     else
       case enabled?() do
-        {:ok, true} -> :run
+        {:ok, true} -> concurrency_disposition()
         {:ok, false} -> {:disabled, System.get_env("DEPDEP_ENABLED")}
         {:error, message} -> {:error, message}
       end
+    end
+  end
+
+  # After `enabled?/0` rather than beside it, deliberately: a disabled run reads
+  # nothing else, so a typo in DEPDEP_CONCURRENCY must not stop the one
+  # invocation whose entire purpose is to do nothing and exit 0.
+  #
+  # Read here, before any provider runs, for the reason `parse/1` refuses an
+  # unknown switch: the variable exists to make a number trustworthy, so a value
+  # it cannot read is a usage error, and discovering it halfway through a
+  # transfer would leave the run half-measured.
+  defp concurrency_disposition do
+    case Depdep.S3.concurrency_setting() do
+      {:ok, _} -> :run
+      {:error, message} -> {:error, message}
     end
   end
 
@@ -608,6 +623,10 @@ defmodule Depdep.CLI do
     DEPDEP_ENABLED=false turns depdep off: it reports that it is off and exits
     0 without reading anything. Unset means enabled, so leaving it alone is the
     same as never having heard of it.
+
+    DEPDEP_CONCURRENCY sets how many transfers run at once, for taking a
+    measurement rather than for tuning: =1 is the serial baseline. Unset means
+    derived from the scheduler count, which is what every real run should use.
     """
   end
 end
