@@ -121,6 +121,7 @@ your CI keeps those.
 | `DEPDEP_SECRET_KEY` | | required, keep it masked |
 | `DEPDEP_REGION` | `us-east-1` | optional, this is the default |
 | `DEPDEP_ENABLED` | `false` | optional, unset means enabled |
+| `DEPDEP_CONCURRENCY` | `1` | optional, an instrument — see below |
 
 **If any of them is unset, depdep says so and exits 0.** Nothing breaks; Mix
 compiles the dependency as it always would. You can wire depdep into a pipeline
@@ -138,6 +139,26 @@ used to mean unsetting `DEPDEP_ENDPOINT` — editing the store's configuration t
 take a reading, and remembering to put it back. A value that is neither `true`
 nor `false` is refused rather than guessed at, because a baseline quietly served
 from the store is worse than no baseline.
+
+**`DEPDEP_CONCURRENCY` is an instrument, not a tuning knob.** Unset — which is
+what every real run should be — depdep derives the number from the scheduler
+count, clamped so a small laptop still overlaps usefully and a large runner does
+not open a session per core against one store. Setting it overrides that
+derivation exactly, without the clamp, so `DEPDEP_CONCURRENCY=1` is a genuinely
+serial run: one connection, one transfer at a time.
+
+It exists because a speedup claim has to be falsifiable. Depdep's concurrency
+figure was measured against a local socket with injected latency, and
+concurrency was the one variable in that claim that could not be varied without
+checking out an older commit — which moves five other things at the same time
+and makes the difference unattributable. With this, the comparison is two
+pipelines, one commit, one variable.
+
+If a measurement shows the derived value is wrong, the fix is to change the
+derivation rather than to tell anyone to set this. A value that is not a
+positive integer, or one above the ceiling of 256, is refused rather than
+clamped — substituting a number you did not ask for would label the run with a
+concurrency it never used, which is the failure the variable exists to avoid.
 
 ### 3. Add the bootstrap script
 

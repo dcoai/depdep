@@ -12,19 +12,94 @@ defmodule Depdep.S3 do
   # N whole archives.
   @chunk 65_536
 
+  # Well above the derived maximum of 32, so it never obstructs a real
+  # experiment, and low enough that a stray paste cannot point a runner at the
+  # shared store with thousands of sessions.
+  @concurrency_ceiling 256
+
   @doc """
   How many transfers may be in flight at once.
 
-  Derived, never configured. The work is IO-bound — a round trip to the store
-  and a tar extraction — so this is a multiple of the scheduler count rather
-  than equal to it, clamped so a 2-core laptop still overlaps usefully and a
-  96-core runner does not open ninety-six sessions against one MinIO.
+  **Derived for every real run, and overridable only as an instrument.** The
+  work is IO-bound — a round trip to the store and a tar extraction — so the
+  derived value is a multiple of the scheduler count rather than equal to it,
+  clamped so a 2-core laptop still overlaps usefully and a 96-core runner does
+  not open ninety-six sessions against one MinIO.
+
+  `DEPDEP_CONCURRENCY` overrides it, for one reason. #12's speedup was measured
+  against a local socket with injected latency, and concurrency was the one
+  variable in that claim that could not be varied on current code — which left
+  the claim unfalsifiable, and #41 carrying it as an unmet criterion. With this,
+  `DEPDEP_CONCURRENCY=1` is the serial baseline: same commit, same objects, one
+  variable. Pinning a pre-#12 commit would have moved five other things at once.
+
+  **It is not a tuning knob.** If a measurement shows the derivation is wrong,
+  the fix is to change the derivation.
+
+  **The derived clamp does not apply to an explicit value.** Putting `=1`
+  through `max(8)` would run eight transfers and report the run as serial, which
+  is exactly the quietly-wrong number the variable exists to prevent.
 
   **`start/0` has to configure `:httpc` to match, and the obvious way to do
   that is wrong** — see there. The symptom of getting it wrong is a concurrency
-  change that measures as no change at all.
+  change that measures as no change at all. It calls this function, so an
+  override reaches httpc without a second place to keep in step.
+
+  Raises on a value `concurrency_setting/0` refuses. Unreachable through
+  `Depdep.CLI`, which reads the environment before any provider runs — so
+  reaching it means that check was bypassed, and falling back to the derived
+  value would hand back a run labelled with a concurrency it did not use.
   """
-  def concurrency, do: (System.schedulers_online() * 4) |> max(8) |> min(32)
+  def concurrency do
+    case concurrency_setting() do
+      {:ok, n} -> n
+      {:error, message} -> raise ArgumentError, message
+    end
+  end
+
+  @doc """
+  `{:ok, n}`, or `{:error, message}` for a `DEPDEP_CONCURRENCY` it cannot read.
+
+  **Unset means derived**, so every consumer that ignores this variable is
+  unaffected, and empty means unset — a CI variable declared without a value is
+  ordinary, and both `env/1` and `Depdep.CLI.enabled?/0` already read `""` that
+  way.
+
+  **An out-of-range value is refused, not clamped.** Clamping would substitute a
+  number the operator did not ask for, which is the same defect as reading
+  `one` as 16 and lands in the same place: a measurement labelled with a
+  concurrency it did not use. The ceiling is there because three projects now
+  share one store, and an instrument must not be the way around the limit that
+  keeps a single runner from opening a session per core.
+  """
+  def concurrency_setting do
+    case System.get_env("DEPDEP_CONCURRENCY") do
+      nil -> {:ok, derived_concurrency()}
+      value -> from_concurrency(String.trim(value))
+    end
+  end
+
+  defp derived_concurrency, do: (System.schedulers_online() * 4) |> max(8) |> min(32)
+
+  defp from_concurrency(""), do: {:ok, derived_concurrency()}
+
+  defp from_concurrency(value) do
+    case Integer.parse(value) do
+      {n, ""} when n >= 1 and n <= @concurrency_ceiling ->
+        {:ok, n}
+
+      {n, ""} when n > @concurrency_ceiling ->
+        {:error,
+         "DEPDEP_CONCURRENCY is #{n}; the ceiling is #{@concurrency_ceiling}. " <>
+           "Refused rather than clamped, so a run is never labelled with a " <>
+           "concurrency it did not use"}
+
+      _ ->
+        {:error,
+         ~s(DEPDEP_CONCURRENCY is "#{value}"; ) <>
+           "it takes a positive integer up to #{@concurrency_ceiling}"}
+    end
+  end
 
   @doc """
   Reads the four required environment variables, or says which one is missing.
