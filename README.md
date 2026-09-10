@@ -122,6 +122,8 @@ your CI keeps those.
 | `DEPDEP_REGION` | `us-east-1` | optional, this is the default |
 | `DEPDEP_ENABLED` | `false` | optional, unset means enabled |
 | `DEPDEP_CONCURRENCY` | `1` | optional, an instrument — see below |
+| `DEPDEP_METRESIS_URL` | `http://metresis:2060` | optional, both or neither |
+| `DEPDEP_METRESIS_TOKEN` | `mtr_ing_…` | optional, keep it masked |
 
 **If any of them is unset, depdep says so and exits 0.** Nothing breaks; Mix
 compiles the dependency as it always would. You can wire depdep into a pipeline
@@ -159,6 +161,44 @@ derivation rather than to tell anyone to set this. A value that is not a
 positive integer, or one above the ceiling of 256, is refused rather than
 clamped — substituting a number you did not ask for would label the run with a
 concurrency it never used, which is the failure the variable exists to avoid.
+
+### Reporting to metresis
+
+**With `DEPDEP_METRESIS_URL` and `DEPDEP_METRESIS_TOKEN` both set**, depdep posts
+what a run cost to a [metresis](https://gitlab.conet.yarina.org/dco-tek/metresis)
+instance. With either unset it sends nothing and opens no connection.
+
+Why bother, when the summary line already prints a duration: because one sample
+of a pipeline timing answers nothing. Job durations on a busy runner vary three
+to four times over on *identical code*, against a depdep cost of a few seconds.
+Only a series separates a real regression from a noisy afternoon.
+
+    depdep.elapsed      the whole run                        seconds
+    depdep.span         one provider's concurrent phase      seconds
+    depdep.download     one unit, off the network            seconds
+    depdep.extract      one unit, unpacked (or tarred)       seconds
+    depdep.bytes        one unit, compressed                 bytes
+    depdep.bytes_total  one provider                         bytes
+    depdep.units        one provider, one bucket             count
+    depdep.concurrency  transfers allowed at once            number
+    depdep.parallelism  work done ÷ wall-clock               number
+
+Samples carry `provider`, `unit`, `bucket` and `reason` as labels, and the run
+carries the project, commit, ref, pipeline and job that GitLab already puts in
+the environment — so **no pipeline needs editing**. The token names the domain,
+so depdep never says where to write.
+
+`depdep.parallelism` is the one worth explaining. Units transfer 8–32 at a time,
+so the summed per-unit time normally *exceeds* the wall-clock span containing
+it, and the ratio is how many were genuinely in flight. Read against
+`depdep.concurrency` it says whether the limit was the constraint: a parallelism
+of 6 under a limit of 32 means raising the limit would do nothing.
+
+**Nothing here can fail your pipeline.** A refused connection, a 401, a 500 or a
+hang is a warning and an exit 0, on a short timeout of its own — the numbers are
+a by-product of work that already succeeded. The `Idempotency-Key` is derived
+from the pipeline and job rather than the clock, so a retried job cannot
+double-count.
 
 ### 3. Add the bootstrap script
 
