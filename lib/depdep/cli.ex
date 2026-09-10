@@ -14,7 +14,7 @@ defmodule Depdep.CLI do
   here may fail a build.
   """
 
-  alias Depdep.{Provider, Report, Roots, Sweep, Unit}
+  alias Depdep.{Metrics, Provider, Report, Roots, Sweep, Unit}
 
   @switches [
     plan: :boolean,
@@ -36,6 +36,7 @@ defmodule Depdep.CLI do
     apt_cache_dir: :string,
     repo: :keep,
     git_mirror_dir: :string,
+    metrics: :string,
     help: :boolean
   ]
 
@@ -229,14 +230,18 @@ defmodule Depdep.CLI do
         # and compiling depdep is the consumer's cost and varies with their
         # runner's cache — folding it in would put back exactly the noise this
         # number exists to remove.
-        {elapsed, tallies} =
+        {elapsed, phases} =
           :timer.tc(fn -> Enum.map(providers, &transfer_provider(&1, opts, direction, cfg)) end)
 
+        # The summary line is unchanged, deliberately: the tallies it renders are
+        # now carried on the phases rather than returned instead of them.
         IO.puts(
           "depdep: " <>
-            Report.render(direction, Report.merge(tallies)) <>
+            Report.render(direction, Report.merge(Enum.map(phases, & &1.tally))) <>
             " in " <> Report.duration(elapsed)
         )
+
+        write_metrics(opts, phases, direction, elapsed)
     end
   end
 
@@ -257,15 +262,51 @@ defmodule Depdep.CLI do
     # this was an `Enum.reduce`. That is not an oversight: a provider reading a
     # file depdep itself just wrote and failing is a broken machine, not a cold
     # cache.
-    units
-    |> Task.async_stream(&step(provider, &1, direction, cfg),
-      max_concurrency: Depdep.S3.concurrency(),
-      ordered: false,
-      timeout: :infinity
-    )
-    |> Enum.reduce(%{}, fn {:ok, bucket}, tally ->
-      Report.count(tally, direction, bucket)
-    end)
+    concurrency = Depdep.S3.concurrency()
+
+    # Read once, before the stream, so every unit's offset is measured from the
+    # same origin. Queue wait is the difference between this and a unit's entry,
+    # and it is the only way to tell a phase that was concurrency-bound from one
+    # that simply had little to do.
+    phase_start = System.monotonic_time(:microsecond)
+
+    {span, {tally, unit_metrics}} =
+      :timer.tc(fn ->
+        units
+        |> Task.async_stream(&step(provider, &1, direction, cfg, phase_start),
+          max_concurrency: concurrency,
+          ordered: false,
+          timeout: :infinity
+        )
+        |> Enum.reduce({%{}, []}, fn {:ok, {bucket, metrics}}, {tally, acc} ->
+          {Report.count(tally, direction, bucket), [metrics | acc]}
+        end)
+      end)
+
+    %Metrics.Phase{
+      provider: Depdep.Provider.name(provider),
+      direction: direction,
+      span_us: span,
+      concurrency: concurrency,
+      tally: tally,
+      units: unit_metrics
+    }
+  end
+
+  # Never fails the run. A measurement that could break a pipeline would be a
+  # worse instrument than no measurement, and `--metrics` is a debugging
+  # convenience rather than the record.
+  defp write_metrics(opts, phases, direction, elapsed) do
+    case opts[:metrics] do
+      nil ->
+        :ok
+
+      path ->
+        case Metrics.write(path, Metrics.to_map(phases, direction, elapsed)) do
+          :ok -> :ok
+          {:error, message} -> warn("could not write metrics — #{message}")
+        end
+    end
   end
 
   # `Depdep.Report.outcome/3` decides everything that can be decided without the
@@ -273,83 +314,125 @@ defmodule Depdep.CLI do
   #
   # Returns the bucket this unit lands in rather than a tally: results are folded
   # as they arrive from the stream, so a step must not carry one.
-  defp step(provider, unit, direction, cfg) do
+  defp step(provider, unit, direction, cfg, phase_start) do
+    # Taken at entry rather than at scheduling: `Task.async_stream` starts at
+    # most `max_concurrency` tasks at once, so the gap between the phase start
+    # and this is the queue wait.
+    base = %Metrics.Unit{
+      provider: Depdep.Provider.name(provider),
+      label: Unit.label(unit),
+      offset_us: System.monotonic_time(:microsecond) - phase_start
+    }
+
     case Report.outcome(direction, unit.resolution, provider.present?(unit)) do
       {:done, :skipped} ->
         {:skip, reason} = unit.resolution
         warn("#{Unit.label(unit)}: skipped — #{reason}")
-        :skipped
+        {:skipped, %{base | bucket: :skipped, reason: reason}}
 
       {:done, bucket} ->
-        bucket
+        {bucket, %{base | bucket: bucket}}
 
       {:network, action} ->
-        reach(action, provider, unit, cfg)
+        reach(action, provider, unit, cfg, base)
     end
   end
 
-  defp reach(:fetch, provider, unit, cfg) do
+  defp reach(:fetch, provider, unit, cfg, base) do
     tmp = tmp_path()
 
-    result =
-      case Depdep.S3.get(cfg, unit.object, tmp) do
-        :ok -> provider.restore(unit, tmp)
-        other -> other
+    {download_us, fetched} = :timer.tc(fn -> Depdep.S3.get(cfg, unit.object, tmp) end)
+
+    # The size is read here because `File.rm/1` below is the last moment it
+    # exists, and it is the compressed size — what actually crossed the network,
+    # which is the number the download time belongs with.
+    {restore_us, result, bytes} =
+      case fetched do
+        :ok ->
+          size = size_of(tmp)
+          {us, restored} = :timer.tc(fn -> provider.restore(unit, tmp) end)
+          {us, restored, size}
+
+        other ->
+          {0, other, 0}
       end
 
     File.rm(tmp)
 
+    measured = %{base | download_us: download_us, restore_us: restore_us, bytes: bytes}
+
     case result do
       :ok ->
         record(provider, unit)
-        :pulled
+        {:pulled, %{measured | bucket: :pulled}}
 
       {:error, "not found"} ->
-        :missing
+        {:missing, %{measured | bucket: :missing, reason: "not found"}}
 
       {:error, reason} ->
         warn("#{Unit.label(unit)}: pull failed (#{reason}) — it will be built as usual")
-        :missing
+        {:missing, %{measured | bucket: :missing, reason: reason}}
     end
   end
 
-  defp reach(:offer, provider, unit, cfg) do
+  defp reach(:offer, provider, unit, cfg, base) do
     case Depdep.S3.head(cfg, unit.object) do
       # A hit is the steady state, and it is exactly when the local tree is known
       # to match the key — so it must be noted here too. Noting only uploads
       # would leave a warm tree unrecognised and re-pulled on the next run.
       :hit ->
         record(provider, unit)
-        :stored
+        {:stored, %{base | bucket: :stored}}
 
       :miss ->
-        upload(provider, unit, cfg)
+        upload(provider, unit, cfg, base)
 
       {:error, reason} ->
         warn("#{Unit.label(unit)}: HEAD failed (#{reason}) — not uploading")
-        :skipped
+        {:skipped, %{base | bucket: :skipped, reason: reason}}
     end
   end
 
-  defp upload(provider, unit, cfg) do
+  defp upload(provider, unit, cfg, base) do
     tmp = tmp_path()
 
-    result =
-      case provider.collect(unit, tmp) do
-        :ok -> Depdep.S3.put(cfg, unit.object, tmp)
-        other -> other
+    # `restore_us` on a push is the tar being BUILT rather than unpacked — the
+    # same half of the same round trip, so it shares the field rather than
+    # doubling the schema for a direction that never mixes with the other.
+    {restore_us, collected} = :timer.tc(fn -> provider.collect(unit, tmp) end)
+
+    {upload_us, result, bytes} =
+      case collected do
+        :ok ->
+          size = size_of(tmp)
+          {us, put} = :timer.tc(fn -> Depdep.S3.put(cfg, unit.object, tmp) end)
+          {us, put, size}
+
+        other ->
+          {0, other, 0}
       end
 
     File.rm(tmp)
 
+    measured = %{base | download_us: upload_us, restore_us: restore_us, bytes: bytes}
+
     case result do
       :ok ->
         record(provider, unit)
-        :uploaded
+        {:uploaded, %{measured | bucket: :uploaded}}
 
       {:error, reason} ->
         warn("#{Unit.label(unit)}: upload failed (#{reason}) — the store simply stays cold")
-        :skipped
+        {:skipped, %{measured | bucket: :skipped, reason: reason}}
+    end
+  end
+
+  # A stat that fails is not worth failing a transfer over: the bytes are a
+  # measurement, and the transfer already succeeded.
+  defp size_of(path) do
+    case File.stat(path) do
+      {:ok, %File.Stat{size: size}} -> size
+      {:error, _} -> 0
     end
   end
 
@@ -615,6 +698,7 @@ defmodule Depdep.CLI do
 
       --repo URL           a repository to mirror (repeatable)
       --git-mirror-dir DIR where mirrors are kept (default .depdep/git)
+      --metrics PATH  write this run's timings to PATH as JSON
 
     Reads DEPDEP_ENDPOINT, DEPDEP_BUCKET, DEPDEP_ACCESS_KEY, DEPDEP_SECRET_KEY
     and optionally DEPDEP_REGION. With any of them unset, --pull and --push
