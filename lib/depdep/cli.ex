@@ -14,7 +14,7 @@ defmodule Depdep.CLI do
   here may fail a build.
   """
 
-  alias Depdep.{Metrics, Provider, Report, Roots, Sweep, Unit}
+  alias Depdep.{Metresis, Metrics, Provider, Report, Roots, Sweep, Unit}
 
   @switches [
     plan: :boolean,
@@ -242,6 +242,7 @@ defmodule Depdep.CLI do
         )
 
         write_metrics(opts, phases, direction, elapsed)
+        post_metrics(phases, direction, elapsed)
     end
   end
 
@@ -424,6 +425,17 @@ defmodule Depdep.CLI do
       {:error, reason} ->
         warn("#{Unit.label(unit)}: upload failed (#{reason}) — the store simply stays cold")
         {:skipped, %{measured | bucket: :skipped, reason: reason}}
+    end
+  end
+
+  # Never fails the run, and never delays it by more than `Depdep.Metresis`'s own
+  # timeout. The measurement is a by-product of work that already succeeded, so
+  # it is the least entitled thing in the tool to change an exit code.
+  defp post_metrics(phases, direction, elapsed) do
+    case Metresis.post(Metrics.to_map(phases, direction, elapsed), direction) do
+      :ok -> :ok
+      :disabled -> :ok
+      {:error, reason} -> warn("metrics not reported (#{reason}) — the run is unaffected")
     end
   end
 
@@ -707,6 +719,11 @@ defmodule Depdep.CLI do
     DEPDEP_ENABLED=false turns depdep off: it reports that it is off and exits
     0 without reading anything. Unset means enabled, so leaving it alone is the
     same as never having heard of it.
+
+    DEPDEP_METRESIS_URL and DEPDEP_METRESIS_TOKEN, both set, post this run's
+    timings to a metresis instance. With either unset nothing is sent and no
+    connection is attempted. A metresis that refuses, fails or hangs is a
+    warning and never a failed run.
 
     DEPDEP_CONCURRENCY sets how many transfers run at once, for taking a
     measurement rather than for tuning: =1 is the serial baseline. Unset means
