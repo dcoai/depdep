@@ -279,6 +279,35 @@ defmodule Depdep.MetresisTest do
     end
   end
 
+  describe "saved time is posted only where a hit knew its compile time" do
+    test "per unit, and as a run total" do
+      hit = %Unit{provider: "mix", label: "app/jason", bucket: :pulled, saved_us: 2_100_000}
+      other = %Unit{provider: "mix", label: "app/decimal", bucket: :pulled}
+
+      phase = %Phase{
+        provider: "mix",
+        direction: :pull,
+        span_us: 1,
+        concurrency: 8,
+        units: [hit, other]
+      }
+
+      samples = [phase] |> Metrics.to_map(:pull, 1) |> Metresis.samples()
+
+      assert [%{"value" => 2.1, "labels" => %{"unit" => "app/jason"}}] =
+               Enum.filter(samples, &(&1["metric"] == "depdep.saved"))
+
+      assert [%{"value" => 2.1}] = Enum.filter(samples, &(&1["metric"] == "depdep.saved_total"))
+    end
+
+    test "a run where nothing knew posts no total — absence is not zero" do
+      unit = %Unit{provider: "mix", label: "app/jason", bucket: :pulled}
+      phase = %Phase{provider: "mix", direction: :pull, span_us: 1, concurrency: 8, units: [unit]}
+      samples = [phase] |> Metrics.to_map(:pull, 1) |> Metresis.samples()
+      refute Enum.any?(samples, &(&1["metric"] in ["depdep.saved", "depdep.saved_total"]))
+    end
+  end
+
   describe "a reason is a label, not a log line" do
     test "a long reason is truncated rather than stored whole or dropped" do
       long = String.duplicate("x", 500)

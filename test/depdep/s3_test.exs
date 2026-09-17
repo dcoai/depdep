@@ -83,6 +83,24 @@ defmodule Depdep.S3Test do
       refute head =~ "transfer-encoding: chunked"
     end
 
+    # #66: what an object says about itself is a header, signed with the rest,
+    # so it cannot be dropped in transit unnoticed.
+    test "metadata goes out as x-amz-meta headers, and is signed" do
+      content = "the archive bytes"
+      path = Path.join(System.tmp_dir!(), "depdep-meta-#{System.unique_integer([:positive])}")
+      File.write!(path, content)
+      on_exit(fn -> File.rm(path) end)
+
+      {port, await} = capture_request(byte_size(content))
+
+      assert S3.put(config(port), "v2/some/object.tar.gz", path, %{"compile-us" => 2_500_000}) ==
+               :ok
+
+      head = await.() |> String.split("\r\n\r\n", parts: 2) |> hd() |> String.downcase()
+      assert head =~ "x-amz-meta-compile-us: 2500000"
+      assert head =~ ~r/signedheaders=[^,]*x-amz-meta-compile-us/
+    end
+
     test "signs the streamed body with the hash of the file, not of the empty string" do
       content = "the archive bytes"
       path = Path.join(System.tmp_dir!(), "depdep-sig-#{System.unique_integer([:positive])}")
@@ -235,6 +253,17 @@ defmodule Depdep.S3Test do
     token = if next, do: "<NextContinuationToken>#{next}</NextContinuationToken>", else: ""
 
     ~s(<?xml version="1.0"?><ListBucketResult>#{contents}#{token}</ListBucketResult>)
+  end
+
+  describe "metadata/2" do
+    test "reads the object's x-amz-meta headers back from one HEAD" do
+      {agent, port} =
+        Depdep.FakeStore.start(%{"v2/x/1/abc.tar.gz" => {"bytes", %{"compile-us" => "42"}}})
+
+      assert S3.metadata(config(port), "v2/x/1/abc.tar.gz") == {:ok, %{"compile-us" => "42"}}
+      assert S3.metadata(config(port), "v2/x/1/absent.tar.gz") == :miss
+      assert [{"HEAD", _, _}, {"HEAD", _, _}] = Depdep.FakeStore.requests(agent)
+    end
   end
 
   describe "canonical_query/1" do
