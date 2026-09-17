@@ -163,7 +163,17 @@ defmodule Depdep.Metresis do
       sample("depdep.download", seconds(unit.download_us), labels),
       sample("depdep.extract", seconds(unit.restore_us), labels),
       sample("depdep.bytes", unit.bytes, labels)
-    ]
+    ] ++ compile_sample(unit, labels)
+  end
+
+  # Only a unit that was actually compiled carries the number; "absence is not
+  # zero" again. The measurement's kind rides along as a label so a dashboard
+  # can show rebar3's boundary spans apart from Mix's exact ones.
+  defp compile_sample(%{compile_us: nil}, _labels), do: []
+
+  defp compile_sample(unit, labels) do
+    kind = if unit.compile_exact, do: "exact", else: "boundary"
+    [sample("depdep.compile", seconds(unit.compile_us), Map.put(labels, "measured", kind))]
   end
 
   defp put_reason(labels, nil), do: labels

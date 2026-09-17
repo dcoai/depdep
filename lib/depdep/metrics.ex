@@ -46,12 +46,19 @@ defmodule Depdep.Metrics do
     `offset_us` is entry time relative to the start of the phase, so queue wait
     is visible. Without it, a run where the concurrency limit was binding looks
     exactly like one where it was not.
+
+    `compile_us` is set only on a miss that `--compile-deps` compiled — the one
+    moment the number exists — and `compile_exact` says whether Mix's own
+    boundaries measured it (`true`) or rebar3's start and the next boundary did
+    (`false`). `nil` on every other unit: absent is not zero (#59).
     """
     defstruct [
       :provider,
       :label,
       :bucket,
       :reason,
+      :compile_us,
+      :compile_exact,
       offset_us: 0,
       download_us: 0,
       restore_us: 0,

@@ -29,6 +29,7 @@ defmodule Depdep.CLI do
     pull: :boolean,
     push: :boolean,
     mix_get: :boolean,
+    compile_deps: :boolean,
     provider: :keep,
     project: :keep,
     exclude: :keep,
@@ -75,6 +76,10 @@ defmodule Depdep.CLI do
   """
   def combination(opts, providers) do
     cond do
+      opts[:compile_deps] == true and opts[:mix_get] != true ->
+        {:error,
+         "--compile-deps compiles what a pull left missing after --mix-get, so it needs both"}
+
       opts[:mix_get] != true ->
         :ok
 
@@ -272,8 +277,13 @@ defmodule Depdep.CLI do
         # store existed, so an unconfigured store must not be how a fetch is
         # silently skipped.
         if opts[:mix_get] do
-          {_phases, status} = mix_get([], opts, nil)
+          {_phases, _units, status} = mix_get([], opts, nil)
           if status != 0, do: System.halt(status)
+
+          # With no store, nothing was restored, so every dependency is what a
+          # pull would have left missing: the consumer's compile moved one line
+          # up, still timed, still Mix's exit status.
+          if opts[:compile_deps], do: compile_without_store(opts)
         end
 
         :ok
@@ -291,28 +301,92 @@ defmodule Depdep.CLI do
         # and compiling depdep is the consumer's cost and varies with their
         # runner's cache — folding it in would put back exactly the noise this
         # number exists to remove.
-        {elapsed, {phases, exit_status}} =
+        {elapsed, {phases, mix_units, exit_status}} =
           :timer.tc(fn ->
             phases = Enum.map(providers, &transfer_provider(&1, opts, direction, cfg))
-            if opts[:mix_get], do: mix_get(phases, opts, cfg), else: {phases, 0}
+            if opts[:mix_get], do: mix_get(phases, opts, cfg), else: {phases, [], 0}
           end)
+
+        # Outside the transfer's clock: `elapsed` is what depdep cost, and a
+        # compile is what the store did NOT save this time.
+        {phases, compiled, exit_status} =
+          if opts[:compile_deps] == true and exit_status == 0,
+            do: compile_deps(phases, mix_units, opts),
+            else: {phases, nil, exit_status}
 
         # The summary line is unchanged, deliberately: the tallies it renders are
         # now carried on the phases rather than returned instead of them.
         IO.puts(
           "depdep: " <>
             Report.render(direction, Report.merge(Enum.map(phases, & &1.tally))) <>
-            " in " <> Report.duration(elapsed)
+            " in " <> Report.duration(elapsed) <> compiled_clause(compiled)
         )
 
         write_metrics(opts, phases, direction, elapsed)
         post_metrics(phases, direction, elapsed)
 
         # After the summary and the metrics, never before: what the pull did is
-        # still true and still worth recording when the fetch that followed it
-        # failed. The status is `mix deps.get`'s own — the job fails here exactly
-        # as it would have on the bare line this replaces (#60).
+        # still true and still worth recording when the fetch or the compile
+        # that followed it failed. The status is Mix's own — the job fails here
+        # exactly as it would have on the line this replaces (#60, #59).
         if exit_status != 0, do: System.halt(exit_status)
+    end
+  end
+
+  defp compile_without_store(opts) do
+    {:ok, units, warnings} = Depdep.Provider.Mix.enumerate(opts)
+    Enum.each(warnings, &warn/1)
+
+    absent =
+      Enum.filter(units, fn unit ->
+        not match?({:not_for_env, _}, unit.resolution) and
+          not Depdep.Provider.Mix.present?(unit)
+      end)
+
+    {us, {status, measured, _unmeasured}} =
+      :timer.tc(fn -> Depdep.Compile.run(absent, Keyword.fetch!(opts, :env)) end)
+
+    IO.puts("depdep: compiled #{map_size(measured)} in " <> Report.duration(us))
+    if status != 0, do: System.halt(status)
+  end
+
+  defp compiled_clause(nil), do: ""
+  defp compiled_clause({n, us}), do: " — compiled #{n} in " <> Report.duration(us)
+
+  # Exactly the misses, named to one `mix deps.compile` per member. Mix orders
+  # them; depdep times them from the boundaries Mix prints. A restored unit is
+  # never mentioned, so Mix never looks at it (#59).
+  defp compile_deps(phases, mix_units, opts) do
+    {mix_phases, others} = Enum.split_with(phases, &(&1.provider == "mix"))
+
+    missing =
+      for phase <- mix_phases,
+          %Metrics.Unit{bucket: :missing, label: label} <- phase.units,
+          do: label
+
+    to_compile = Enum.filter(mix_units, &(Unit.label(&1) in missing))
+
+    {us, {status, measured, unmeasured}} =
+      :timer.tc(fn -> Depdep.Compile.run(to_compile, Keyword.fetch!(opts, :env)) end)
+
+    Enum.each(unmeasured, fn label ->
+      warn("#{label}: compiled, but Mix printed no boundary for it — no compile time recorded")
+    end)
+
+    if status != 0, do: warn("mix deps.compile exited #{status} — the run ends with that status")
+
+    phases =
+      Enum.map(mix_phases, fn phase ->
+        %{phase | units: Enum.map(phase.units, &with_compile(&1, measured))}
+      end) ++ others
+
+    {phases, {map_size(measured), us}, status}
+  end
+
+  defp with_compile(%Metrics.Unit{label: label} = unit, measured) do
+    case Map.fetch(measured, label) do
+      {:ok, {us, kind}} -> %{unit | compile_us: us, compile_exact: kind == :exact}
+      :error -> unit
     end
   end
 
@@ -325,15 +399,18 @@ defmodule Depdep.CLI do
 
     case Depdep.Provider.Mix.Get.run(root, projects, Keyword.fetch!(opts, :env)) do
       :ok ->
-        {Enum.map(phases, &second_pass(&1, opts, cfg)), 0}
+        {phases, units} = Enum.map_reduce(phases, [], &second_pass(&1, &2, opts, cfg))
+        {phases, units, 0}
 
       {:error, {project, status}} ->
         warn("mix deps.get failed in #{project} (exit #{status}) — the second pass is not run")
-        {phases, status}
+        {phases, [], status}
     end
   end
 
-  defp second_pass(%Metrics.Phase{provider: "mix"} = phase, opts, cfg) do
+  # Returns the phase as the run ended and the re-enumerated mix units, which
+  # `--compile-deps` needs to know where each miss lives.
+  defp second_pass(%Metrics.Phase{provider: "mix"} = phase, _units, opts, cfg) do
     provider = Depdep.Provider.Mix
     {:ok, units, warnings} = provider.enumerate(opts)
     Enum.each(warnings, &warn/1)
@@ -344,10 +421,10 @@ defmodule Depdep.CLI do
 
     {transfer, settled} = Depdep.SecondPass.plan(phase.units, units)
     {span, {_tally, transferred}} = transfer_units(provider, transfer, :pull, cfg)
-    Depdep.SecondPass.merge(phase, settled, transferred, span)
+    {Depdep.SecondPass.merge(phase, settled, transferred, span), units}
   end
 
-  defp second_pass(phase, _opts, _cfg), do: phase
+  defp second_pass(phase, units, _opts, _cfg), do: {phase, units}
 
   defp transfer_provider(provider, opts, direction, cfg) do
     {:ok, units, warnings} = provider.enumerate(opts)
@@ -781,6 +858,11 @@ defmodule Depdep.CLI do
                  dependency and its cone are pulled in the same invocation, so
                  no second pull is needed. mix deps.get's exit status becomes
                  depdep's; the store's failures stay warnings.
+      --compile-deps  with --pull --mix-get: compile exactly the dependencies the
+                 pull left missing, one mix deps.compile per member naming only
+                 those, timed per dependency from the boundaries Mix prints. Your
+                 own mix compile then finds every dependency up to date. A
+                 dependency that does not compile ends the run with Mix's status.
 
       --provider NAME operate on this artifact kind (repeatable).
                       Default: mix. Known: #{Provider.known()}

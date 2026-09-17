@@ -182,6 +182,7 @@ Only a series separates a real regression from a noisy afternoon.
     depdep.units        one provider, one bucket             count
     depdep.concurrency  transfers allowed at once            number
     depdep.parallelism  work done ÷ wall-clock               number
+    depdep.compile      one unit, compiled on a miss         seconds  (--compile-deps)
 
 Samples carry `provider`, `unit`, `bucket` and `reason` as labels, and the run
 carries the project, commit, ref, pipeline and job that GitLab already puts in
@@ -233,7 +234,7 @@ wrong. If depdep is public on your instance, skip all of this and use the plain
 
 ```yaml
 script:
-  - elixir scripts/depdep.exs --pull --mix-get || mix deps.get
+  - elixir scripts/depdep.exs --pull --mix-get --compile-deps || mix deps.get
   - mix compile
   - mix test
   - elixir scripts/depdep.exs --push     # upload what the store lacked
@@ -266,6 +267,24 @@ bare `mix deps.get` line it replaced did — that is the consumer's fetch, not t
 store's — so `mix deps.get`'s exit status becomes depdep's, after the summary
 line and the metrics for what the pull did manage. Store trouble stays a warning
 and exit 0, and with no store configured at all `deps.get` still runs.
+
+**`--compile-deps` compiles exactly what the pull left missing, timed.** After
+`deps.get`, depdep runs one `mix deps.compile <names>` per member naming only
+the misses (and the units it cannot key, which a miss may depend on). Restored
+dependencies are never mentioned, so Mix never looks at them; your own
+`mix compile` line, untouched, then finds every dependency up to date and
+compiles only the project. Nothing is compiled twice. Mix's output is forwarded
+as it is, and each dependency's compile time is read off the boundaries Mix
+already prints — `==> jason` to `Generated jason app` — so there is no
+`MIX_DEBUG` noise and nothing to parse in your pipeline. rebar3 dependencies
+print no end marker, so theirs runs to the next boundary and is labelled as
+such. The number is written beside the build (`_build/<env>/.depdep/<name>.compile`)
+for `--push` to carry with the object, and posted as `depdep.compile`.
+
+This is the one place depdep may fail a job: a dependency that does not compile
+ends the run with Mix's exit status. That is your compile, surfaced one line
+earlier with the same error, not the store's — and it is why the switch is
+opt-in.
 
 **Pull *before* `mix deps.get`, not after** — which is why depdep orders them
 that way rather than leaving it to you. This is the one ordering mistake that
