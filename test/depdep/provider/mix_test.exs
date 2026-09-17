@@ -118,7 +118,7 @@ defmodule Depdep.Provider.MixTest do
       File.mkdir_p!(dir)
 
       File.write!(Path.join(dir, "mix.exs"), """
-      defmodule DepdepMixEnvFixture.MixProject do
+      defmodule DepdepMixEnvFixture#{System.unique_integer([:positive])}.MixProject do
         use Mix.Project
         def project, do: [app: :depdep_mix_env_fixture, version: "0.1.0", deps: deps()]
         defp deps, do: [{:jason, "~> 1.4"}, {:ex_doc, "~> 0.34", only: :dev}]
@@ -165,7 +165,7 @@ defmodule Depdep.Provider.MixTest do
       dir = Path.join(root, "envapp")
 
       File.write!(Path.join(dir, "mix.exs"), """
-      defmodule DepdepMixEnvFixtureGit.MixProject do
+      defmodule DepdepMixEnvFixtureGit#{System.unique_integer([:positive])}.MixProject do
         use Mix.Project
         def project, do: [app: :depdep_mix_env_fixture_git, version: "0.1.0", deps: deps()]
         defp deps, do: [{:jason, "~> 1.4"}, {:forked, git: "https://example.invalid/forked.git"}, {:ex_doc, "~> 0.34", only: :dev}]

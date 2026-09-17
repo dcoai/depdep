@@ -88,6 +88,34 @@ defmodule Depdep.CLITest do
     end
   end
 
+  # #60: `--mix-get` is a step inside a pull, for the one provider that has a
+  # `deps.get`. Any other combination is someone editing an invocation and
+  # getting less than they asked for, which is the case worth stopping.
+  describe "combination/2" do
+    test "--mix-get needs --pull" do
+      {:ok, opts} = CLI.parse(["--push", "--mix-get"])
+      assert {:error, message} = CLI.combination(opts, [Depdep.Provider.Mix])
+      assert message =~ "--pull"
+    end
+
+    test "--mix-get is for the mix provider only" do
+      {:ok, opts} = CLI.parse(["--pull", "--mix-get", "--provider", "apt"])
+      assert {:error, message} = CLI.combination(opts, [Depdep.Provider.Apt])
+      assert message =~ "mix provider"
+
+      {:ok, opts} = CLI.parse(["--pull", "--mix-get", "--provider", "mix", "--provider", "apt"])
+      assert {:error, _} = CLI.combination(opts, [Depdep.Provider.Mix, Depdep.Provider.Apt])
+    end
+
+    test "--pull --mix-get with the default provider is fine, and so is everything without it" do
+      {:ok, opts} = CLI.parse(["--pull", "--mix-get"])
+      assert CLI.combination(opts, [Depdep.Provider.Mix]) == :ok
+
+      {:ok, opts} = CLI.parse(["--push", "--provider", "apt"])
+      assert CLI.combination(opts, [Depdep.Provider.Apt]) == :ok
+    end
+  end
+
   # #54: one sentence used to follow every error in `main/1`'s branch, and it
   # named switches — so `DEPDEP_ENABLED=flase` was told its SWITCH was wrong.
   # The hint is chosen per class here so a class added later must pick one.
