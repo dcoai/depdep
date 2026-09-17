@@ -343,12 +343,12 @@ The output says what happened, in the terms that matter. A cold pipeline, then
 the push after the build that pipeline ran:
 
 ```
-depdep: pulled 555, missing 8, already present 0, skipped 1 in 41.2s
-depdep: already stored 555, uploaded 8, not built here 0, skipped 1 in 18.7s
+depdep: pulled 555, missing 8, already present 0, skipped 1, not for this env 6 in 41.2s
+depdep: already stored 555, uploaded 8, not built here 0, skipped 1, not for this env 6 in 18.7s
 ```
 
-Every bucket is printed even at zero, and the four **sum to the number of
-dependencies in your lock** — 564 here. The time is depdep's own, covering the
+Every bucket is printed even at zero, and the five **sum to the number of
+dependencies in your lock** — 570 here. The time is depdep's own, covering the
 transfer and not the `Mix.install` that bootstrapped it: a consumer's job
 duration is a poor instrument, since the job around this one measured anywhere
 between 126 s and 532 s on identical code. That is the point of the shape: a
@@ -387,6 +387,20 @@ a bug worth reporting.
   lockfile carries no dependency list for it, so no Merkle key can be computed.
   Its dependents are skipped with it, which is why one git dependency can
   account for several.
+- **`not for this env N`** is a lock entry the current `MIX_ENV` never builds:
+  `ex_doc` and its chain under `MIX_ENV=test`, say, when it is declared
+  `only: :dev`. The lock lists every dependency resolved under *any*
+  environment, and depdep used to ask the store for all of them — a `GET` per
+  job that could only ever miss, since no `--push` from a test job will ever
+  produce a compiled `ex_doc`. Decided from your `mix.exs` and the lock's own
+  edges before any key is computed or any request made, and kept out of
+  `missing` so that number can reach zero and mean it.
+
+  One honest limit: before `mix deps.get`, a git dependency's own dependencies
+  are unknown, so a lock entry the walk did not reach *might* be one of them.
+  Rather than guess, depdep requests those as it always did and says so once —
+  `N dependencies may be outside MIX_ENV=test but are requested anyway`. A pull
+  after `deps.get` has the graph and decides exactly.
 
 To confirm the store is being used at all rather than a CI cache underneath it,
 look for zero recompiles of dependencies in the compile output: every `==>` line

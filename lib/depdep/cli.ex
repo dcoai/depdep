@@ -232,6 +232,7 @@ defmodule Depdep.CLI do
 
   defp plan_key({:key, hash}), do: hash
   defp plan_key({:skip, reason}), do: "SKIP #{reason}"
+  defp plan_key({:not_for_env, env}), do: "NOT FOR ENV #{env}"
 
   # The store is a cache. Every path out of this function that is not a hit ends
   # in "the tool does the work itself", which is why none of them are errors.

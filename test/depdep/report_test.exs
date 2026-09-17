@@ -20,6 +20,15 @@ defmodule Depdep.ReportTest do
       assert Report.outcome(:push, @keyed, false) == {:done, :not_built}
     end
 
+    # #58: decided before the key and before the disk. Neither a miss (the store
+    # could not have had it) nor a skip (depdep is not unable to help).
+    test "a dependency this env never builds is done in either direction, whatever is on disk" do
+      assert Report.outcome(:pull, {:not_for_env, :test}, false) == {:done, :not_for_env}
+      assert Report.outcome(:pull, {:not_for_env, :test}, true) == {:done, :not_for_env}
+      assert Report.outcome(:push, {:not_for_env, :test}, false) == {:done, :not_for_env}
+      assert Report.outcome(:push, {:not_for_env, :test}, true) == {:done, :not_for_env}
+    end
+
     test "only a keyed dependency reaches the store" do
       assert Report.outcome(:pull, @keyed, false) == {:network, :fetch}
       assert Report.outcome(:push, @keyed, true) == {:network, :offer}
@@ -45,18 +54,19 @@ defmodule Depdep.ReportTest do
       tally = %{pulled: 555, missing: 8, present: 0, skipped: 1}
 
       assert Report.render(:pull, tally) ==
-               "pulled 555, missing 8, already present 0, skipped 1"
+               "pulled 555, missing 8, already present 0, skipped 1, not for this env 0"
     end
 
     test "push names every bucket, in order, including the zeros" do
       tally = %{stored: 555, uploaded: 0, not_built: 9, skipped: 0}
 
       assert Report.render(:push, tally) ==
-               "already stored 555, uploaded 0, not built here 9, skipped 0"
+               "already stored 555, uploaded 0, not built here 9, skipped 0, not for this env 0"
     end
 
     test "an empty tally renders as zeros rather than omitting buckets" do
-      assert Report.render(:pull, %{}) == "pulled 0, missing 0, already present 0, skipped 0"
+      assert Report.render(:pull, %{}) ==
+               "pulled 0, missing 0, already present 0, skipped 0, not for this env 0"
     end
   end
 
@@ -121,7 +131,7 @@ defmodule Depdep.ReportTest do
       tally = tally(:pull, List.duplicate(@keyed, 555), complete?: true)
 
       assert Report.render(:pull, tally) ==
-               "pulled 0, missing 0, already present 555, skipped 0"
+               "pulled 0, missing 0, already present 555, skipped 0, not for this env 0"
     end
   end
 
