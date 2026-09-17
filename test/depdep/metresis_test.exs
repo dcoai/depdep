@@ -244,6 +244,41 @@ defmodule Depdep.MetresisTest do
     end
   end
 
+  # #59: the number exists only on a unit --compile-deps compiled. Absence is
+  # not zero, so every other unit posts no `depdep.compile` at all.
+  describe "compile time is posted only where it was measured" do
+    defp compile_samples(unit) do
+      phase = %Phase{provider: "mix", direction: :pull, span_us: 1, concurrency: 8, units: [unit]}
+
+      [phase]
+      |> Metrics.to_map(:pull, 1)
+      |> Metresis.samples()
+      |> Enum.filter(&(&1["metric"] == "depdep.compile"))
+    end
+
+    test "a compiled miss posts seconds and how it was measured" do
+      unit = %Unit{
+        provider: "mix",
+        label: "app/jason",
+        bucket: :missing,
+        compile_us: 2_500_000,
+        compile_exact: true
+      }
+
+      assert [sample] = compile_samples(unit)
+      assert sample["value"] == 2.5
+      assert sample["labels"]["measured"] == "exact"
+      assert sample["labels"]["unit"] == "app/jason"
+
+      boundary = %{unit | compile_exact: false}
+      assert [%{"labels" => %{"measured" => "boundary"}}] = compile_samples(boundary)
+    end
+
+    test "a unit that was not compiled posts nothing" do
+      assert compile_samples(%Unit{provider: "mix", label: "app/jason", bucket: :pulled}) == []
+    end
+  end
+
   describe "a reason is a label, not a log line" do
     test "a long reason is truncated rather than stored whole or dropped" do
       long = String.duplicate("x", 500)
