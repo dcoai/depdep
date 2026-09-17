@@ -41,9 +41,10 @@ defmodule Depdep.CLI do
   ]
 
   def main(argv) do
-    with {:ok, opts} <- parse(argv),
+    with {:ok, opts} <- classify(parse(argv), :switch),
          :run <- disposition(opts),
-         {:ok, providers} <- Provider.resolve(Keyword.get_values(opts, :provider)) do
+         {:ok, providers} <-
+           classify(Provider.resolve(Keyword.get_values(opts, :provider)), :switch) do
       run(providers, opts)
     else
       :help ->
@@ -54,12 +55,35 @@ defmodule Depdep.CLI do
         # so it belongs where the summary goes.
         IO.puts("depdep: disabled by DEPDEP_ENABLED=#{value}")
 
-      {:error, problems} ->
+      {:error, class, problems} ->
         problems |> List.wrap() |> Enum.each(&warn/1)
-        warn("run with --help for the switches this version understands")
+        warn(hint(class))
         System.halt(2)
     end
   end
+
+  # Every error that reaches `main/1` says which kind of thing was wrong, so the
+  # hint can follow the error rather than the branch. The producers keep their
+  # `{:error, _}` shape — `enabled?/0` and `parse/1` are tested on it — and the
+  # class is attached where `main/1` consumes them.
+  defp classify({:error, problems}, class), do: {:error, class, problems}
+  defp classify(other, _class), do: other
+
+  @doc """
+  The one-line hint printed after a usage error, chosen by what went wrong.
+
+  There used to be a single sentence for the whole branch, written when every
+  error in it was a switch error. #50 then routed `DEPDEP_ENABLED` through the
+  same branch and the sentence was reused unread, so a reader whose
+  *environment variable* was refused was told the problem was a switch (#54).
+  `--help` documents both, which is why each hint can still point there.
+
+  Pure and public for the reason `parse/1` is: `main/1` halts, so a decision
+  worth testing must be observable without ending the VM. A third error class
+  added later has to choose its sentence here rather than inherit one.
+  """
+  def hint(:switch), do: "run with --help for the switches this version understands"
+  def hint(:environment), do: "run with --help for the environment variables this version reads"
 
   # Help first, and before `enabled?/0`: `--help` is a request to read the
   # documentation, so answering it with an exit code — because the environment
@@ -71,7 +95,7 @@ defmodule Depdep.CLI do
       case enabled?() do
         {:ok, true} -> concurrency_disposition()
         {:ok, false} -> {:disabled, System.get_env("DEPDEP_ENABLED")}
-        {:error, message} -> {:error, message}
+        {:error, message} -> {:error, :environment, message}
       end
     end
   end
@@ -87,7 +111,7 @@ defmodule Depdep.CLI do
   defp concurrency_disposition do
     case Depdep.S3.concurrency_setting() do
       {:ok, _} -> :run
-      {:error, message} -> {:error, message}
+      {:error, message} -> {:error, :environment, message}
     end
   end
 

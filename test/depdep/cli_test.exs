@@ -87,4 +87,25 @@ defmodule Depdep.CLITest do
       assert problem =~ "this version"
     end
   end
+
+  # #54: one sentence used to follow every error in `main/1`'s branch, and it
+  # named switches — so `DEPDEP_ENABLED=flase` was told its SWITCH was wrong.
+  # The hint is chosen per class here so a class added later must pick one.
+  describe "hint/1 follows the error, not the branch" do
+    # Load-bearing wording (#31, metresis #86): consumers and README quote it.
+    test "a switch problem keeps its exact sentence" do
+      assert CLI.hint(:switch) == "run with --help for the switches this version understands"
+    end
+
+    test "an environment problem is not called a switch" do
+      hint = CLI.hint(:environment)
+      refute hint =~ "switch"
+      assert hint =~ "environment variable"
+      assert hint =~ "--help"
+    end
+
+    test "there is no default: an unknown class is a bug, not a hint" do
+      assert_raise FunctionClauseError, fn -> CLI.hint(:something_new) end
+    end
+  end
 end
