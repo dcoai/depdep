@@ -172,19 +172,49 @@ defmodule Depdep.S3 do
   @doc "`:hit`, `:miss`, or `{:error, reason}` — never a raise, so a flaky store degrades to a compile."
   def head(cfg, object) do
     case request(cfg, :head, object, empty_hash(), [], [], []) do
-      {:ok, status, _} when status in 200..299 -> :hit
-      {:ok, 404, _} -> :miss
-      {:ok, status, _} -> {:error, "HEAD returned #{status}"}
+      {:ok, status, _, _} when status in 200..299 -> :hit
+      {:ok, 404, _, _} -> :miss
+      {:ok, status, _, _} -> {:error, "HEAD returned #{status}"}
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  @doc """
+  The object's user metadata — every `x-amz-meta-*` header, with the prefix
+  stripped — as `{:ok, %{"compile-us" => "2500000"}}`, or `:miss`, or
+  `{:error, reason}`.
+
+  One HEAD. The streamed `get/3` hands `:httpc` a file and gets back
+  `:saved_to_file` with no headers, so what an object carries about itself has
+  to be asked for separately (#66). Called only for a unit that was actually
+  fetched, so the cost is one small request per miss-turned-hit and none for
+  a unit already present.
+  """
+  def metadata(cfg, object) do
+    case request(cfg, :head, object, empty_hash(), [], [], []) do
+      {:ok, status, _, headers} when status in 200..299 -> {:ok, user_metadata(headers)}
+      {:ok, 404, _, _} -> :miss
+      {:ok, status, _, _} -> {:error, "HEAD returned #{status}"}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @meta_prefix "x-amz-meta-"
+
+  defp user_metadata(headers) do
+    for {key, value} <- headers,
+        key = key |> to_string() |> String.downcase(),
+        String.starts_with?(key, @meta_prefix),
+        into: %{},
+        do: {String.replace_prefix(key, @meta_prefix, ""), to_string(value)}
   end
 
   @doc "Streams to `dest` so a large object never sits in memory."
   def get(cfg, object, dest) do
     case request(cfg, :get, object, empty_hash(), [], [], stream: String.to_charlist(dest)) do
-      {:ok, status, _} when status in 200..299 -> :ok
-      {:ok, 404, _} -> {:error, "not found"}
-      {:ok, status, _} -> {:error, "GET returned #{status}"}
+      {:ok, status, _, _} when status in 200..299 -> :ok
+      {:ok, 404, _, _} -> {:error, "not found"}
+      {:ok, status, _, _} -> {:error, "GET returned #{status}"}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -201,15 +231,23 @@ defmodule Depdep.S3 do
   transfer-encoding. That matters — chunked would require the
   `STREAMING-AWS4-HMAC-SHA256-PAYLOAD` signature variant instead of the simple
   one below.
+
+  `metadata` is stored with the object as `x-amz-meta-<key>` headers — signed
+  like every other header, so they cannot be dropped in transit unnoticed —
+  and read back by `metadata/2`. Values are strings; keep them short.
   """
-  def put(cfg, object, source) do
+  def put(cfg, object, source, metadata \\ %{}) do
     size = File.stat!(source).size
     hash = stream_sha256(source)
     body = {&read_chunk/1, File.open!(source, [:binary, :read])}
 
-    case request(cfg, :put, object, hash, [{"content-length", "#{size}"}], [], [], body) do
-      {:ok, status, _} when status in 200..299 -> :ok
-      {:ok, status, body} -> {:error, "PUT returned #{status}: #{String.slice(body, 0, 200)}"}
+    extra =
+      [{"content-length", "#{size}"}] ++
+        Enum.map(metadata, fn {key, value} -> {@meta_prefix <> key, to_string(value)} end)
+
+    case request(cfg, :put, object, hash, extra, [], [], body) do
+      {:ok, status, _, _} when status in 200..299 -> :ok
+      {:ok, status, body, _} -> {:error, "PUT returned #{status}: #{String.slice(body, 0, 200)}"}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -230,14 +268,14 @@ defmodule Depdep.S3 do
         if(token, do: [{"continuation-token", token}], else: [])
 
     case request(cfg, :get, "", empty_hash(), [], query, []) do
-      {:ok, status, body} when status in 200..299 ->
+      {:ok, status, body, _} when status in 200..299 ->
         case parse_listing(body) do
           {:ok, objects, nil} -> {:ok, acc ++ objects}
           {:ok, objects, next} -> list_page(cfg, prefix, next, acc ++ objects)
           {:error, reason} -> {:error, reason}
         end
 
-      {:ok, status, body} ->
+      {:ok, status, body, _} ->
         {:error, "LIST returned #{status}: #{String.slice(body, 0, 200)}"}
 
       {:error, reason} ->
@@ -248,9 +286,14 @@ defmodule Depdep.S3 do
   @doc "Removes one object. Reclamation only — a pipeline identity should not be able to."
   def delete(cfg, object) do
     case request(cfg, :delete, object, empty_hash(), [], [], []) do
-      {:ok, status, _} when status in 200..299 -> :ok
-      {:ok, status, body} -> {:error, "DELETE returned #{status}: #{String.slice(body, 0, 200)}"}
-      {:error, reason} -> {:error, reason}
+      {:ok, status, _, _} when status in 200..299 ->
+        :ok
+
+      {:ok, status, body, _} ->
+        {:error, "DELETE returned #{status}: #{String.slice(body, 0, 200)}"}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -341,8 +384,8 @@ defmodule Depdep.S3 do
       end
 
     case :httpc.request(method, req, [timeout: 300_000, connect_timeout: 15_000], http_opts) do
-      {:ok, :saved_to_file} -> {:ok, 200, ""}
-      {:ok, {{_v, status, _r}, _h, resp}} -> {:ok, status, to_string(resp)}
+      {:ok, :saved_to_file} -> {:ok, 200, "", []}
+      {:ok, {{_v, status, _r}, headers, resp}} -> {:ok, status, to_string(resp), headers}
       {:error, reason} -> {:error, inspect(reason)}
     end
   end

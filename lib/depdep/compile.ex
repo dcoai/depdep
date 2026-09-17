@@ -54,7 +54,7 @@ defmodule Depdep.Compile do
         Enum.reduce(member_units, {measured, unmeasured}, fn unit, {measured, unmeasured} ->
           case Map.fetch(spans, unit.name) do
             {:ok, {us, kind}} ->
-              record(unit, us)
+              :ok = record(unit, us)
               {Map.put(measured, Unit.label(unit), {us, kind}), unmeasured}
 
             :error ->
@@ -112,9 +112,38 @@ defmodule Depdep.Compile do
   def note_path(%Unit{context: %{project_dir: dir, name: name, build_path: build_path}}),
     do: Path.join([dir, build_path, ".depdep", name <> ".compile"])
 
-  defp record(unit, us) do
+  @doc """
+  Records `us` as the unit's compile time — measured here, or carried in from
+  the object a pull restored, so a later run finds it without a request.
+  """
+  def record(unit, us) when is_integer(us) and us >= 0 do
     path = note_path(unit)
     File.mkdir_p!(Path.dirname(path))
     File.write!(path, Integer.to_string(us))
   end
+
+  @doc """
+  The recorded compile time, `{:ok, us}` or `:none`.
+
+  A note that does not parse as an integer is `:none` too: it is a number
+  someone will read as time saved, and a guess is worse than a gap.
+  """
+  def read(unit) do
+    with {:ok, contents} <- File.read(note_path(unit)),
+         {us, ""} <- Integer.parse(String.trim(contents)) do
+      {:ok, us}
+    else
+      _ -> :none
+    end
+  end
+
+  @doc """
+  What a hit saved: the compile it did not do, less what the transfer cost —
+  never below zero, and `nil` when the object carried no compile time.
+
+  A lower bound: `mix deps.get`'s source fetch was saved too and cannot be
+  attributed to one unit, so it is left out.
+  """
+  def saved_us(nil, _transfer_us), do: nil
+  def saved_us(compile_us, transfer_us), do: max(compile_us - transfer_us, 0)
 end

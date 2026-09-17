@@ -122,9 +122,14 @@ defmodule Depdep.Metresis do
   in seconds.
   """
   def samples(map) do
-    run = [sample("depdep.elapsed", seconds(map.elapsed_us), %{})]
+    run = [sample("depdep.elapsed", seconds(map.elapsed_us), %{})] ++ saved_total(map)
     run ++ Enum.flat_map(map.phases, &phase_samples/1)
   end
+
+  # `nil` is a run whose hits carried no compile time — a store built before
+  # #66, or a push side without --compile-deps — and says nothing, not zero.
+  defp saved_total(%{saved_total_us: nil}), do: []
+  defp saved_total(%{saved_total_us: us}), do: [sample("depdep.saved_total", seconds(us), %{})]
 
   defp phase_samples(phase) do
     provider = %{"provider" => phase.provider}
@@ -163,8 +168,11 @@ defmodule Depdep.Metresis do
       sample("depdep.download", seconds(unit.download_us), labels),
       sample("depdep.extract", seconds(unit.restore_us), labels),
       sample("depdep.bytes", unit.bytes, labels)
-    ] ++ compile_sample(unit, labels)
+    ] ++ compile_sample(unit, labels) ++ saved_sample(unit, labels)
   end
+
+  defp saved_sample(%{saved_us: nil}, _labels), do: []
+  defp saved_sample(unit, labels), do: [sample("depdep.saved", seconds(unit.saved_us), labels)]
 
   # Only a unit that was actually compiled carries the number; "absence is not
   # zero" again. The measurement's kind rides along as a label so a dashboard

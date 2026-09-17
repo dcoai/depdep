@@ -183,6 +183,8 @@ Only a series separates a real regression from a noisy afternoon.
     depdep.concurrency  transfers allowed at once            number
     depdep.parallelism  work done ÷ wall-clock               number
     depdep.compile      one unit, compiled on a miss         seconds  (--compile-deps)
+    depdep.saved        one unit, a hit's compile not done   seconds  (lower bound)
+    depdep.saved_total  the run's hits together              seconds
 
 Samples carry `provider`, `unit`, `bucket` and `reason` as labels, and the run
 carries the project, commit, ref, pipeline and job that GitLab already puts in
@@ -285,6 +287,25 @@ This is the one place depdep may fail a job: a dependency that does not compile
 ends the run with Mix's exit status. That is your compile, surfaced one line
 earlier with the same error, not the store's — and it is why the switch is
 opt-in.
+
+**And then a hit says what it saved.** `--push` sends the compile time with the
+object, as metadata; a `--pull` that fetches the object reads it back with one
+`HEAD`, keeps it beside the restored build, and reports `saved_us` — the compile
+not done, less what the download and extraction cost, never below zero. A
+dependency already present saved its whole compile, and asks the store nothing.
+The summary line ends with it, and metresis gets `depdep.saved` per unit and
+`depdep.saved_total` per run:
+
+```
+depdep: pulled 555, missing 8, already present 0, skipped 1, not for this env 6 in 41.2s — saved ~1834.0s
+```
+
+Two honest limits. It is a **lower bound**: the source `mix deps.get` would
+have fetched is saved too and cannot be attributed to one package, so it is
+left out. And an object stored before this existed carries no compile time, so
+a hit on it reports *nothing* — not zero — until the object is next rebuilt by
+a push that measured it. A store that shows no `saved` line is one whose
+objects predate `--compile-deps`, not one that saves nothing.
 
 **Pull *before* `mix deps.get`, not after** — which is why depdep orders them
 that way rather than leaving it to you. This is the one ordering mistake that

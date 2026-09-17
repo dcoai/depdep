@@ -14,7 +14,7 @@ defmodule Depdep.CLI do
   here may fail a build.
   """
 
-  alias Depdep.{Metresis, Metrics, Provider, Report, Roots, Sweep, Unit}
+  alias Depdep.{Metresis, Metrics, Provider, Report, Roots, Unit}
 
   @switches [
     plan: :boolean,
@@ -237,8 +237,8 @@ defmodule Depdep.CLI do
   defp run(providers, opts) do
     cond do
       opts[:plan] -> plan(providers, opts)
-      opts[:report] -> report(opts)
-      opts[:sweep] -> sweep(opts)
+      opts[:report] -> Depdep.CLI.Operator.report(opts)
+      opts[:sweep] -> Depdep.CLI.Operator.sweep(opts)
       opts[:pull] -> transfer(providers, opts, :pull)
       opts[:push] -> transfer(providers, opts, :push)
       true -> IO.puts(usage())
@@ -319,7 +319,8 @@ defmodule Depdep.CLI do
         IO.puts(
           "depdep: " <>
             Report.render(direction, Report.merge(Enum.map(phases, & &1.tally))) <>
-            " in " <> Report.duration(elapsed) <> compiled_clause(compiled)
+            " in " <>
+            Report.duration(elapsed) <> compiled_clause(compiled) <> saved_clause(phases)
         )
 
         write_metrics(opts, phases, direction, elapsed)
@@ -348,6 +349,16 @@ defmodule Depdep.CLI do
 
     IO.puts("depdep: compiled #{map_size(measured)} in " <> Report.duration(us))
     if status != 0, do: System.halt(status)
+  end
+
+  # Only when something knows. `saved ~0s` from a store that has never carried
+  # a compile time would read as "the store is useless", which is not what it
+  # would mean.
+  defp saved_clause(phases) do
+    case Metrics.saved_total_us(phases) do
+      nil -> ""
+      us -> " — saved ~" <> Report.duration(us)
+    end
   end
 
   defp compiled_clause(nil), do: ""
@@ -516,6 +527,12 @@ defmodule Depdep.CLI do
         warn("#{Unit.label(unit)}: skipped — #{reason}")
         {:skipped, %{base | bucket: :skipped, reason: reason}}
 
+      # A unit already on disk saved its whole compile, if it knows how long
+      # that was: the note a --compile-deps or an earlier pull left beside it.
+      {:done, :present} ->
+        saved = Depdep.Compile.saved_us(known_compile(unit), 0)
+        {:present, %{base | bucket: :present, saved_us: saved}}
+
       {:done, bucket} ->
         {bucket, %{base | bucket: bucket}}
 
@@ -550,7 +567,9 @@ defmodule Depdep.CLI do
     case result do
       :ok ->
         record(provider, unit)
-        {:pulled, %{measured | bucket: :pulled}}
+        compile_us = carried_compile(cfg, unit)
+        saved = Depdep.Compile.saved_us(compile_us, download_us + restore_us)
+        {:pulled, %{measured | bucket: :pulled, saved_us: saved}}
 
       {:error, "not found"} ->
         {:missing, %{measured | bucket: :missing, reason: "not found"}}
@@ -579,6 +598,33 @@ defmodule Depdep.CLI do
     end
   end
 
+  # What the object says it cost to compile, read with one HEAD and kept beside
+  # the build so the next run needs no request. A store that cannot answer, or
+  # an object stored before compile times were, is `nil` — never a guess.
+  defp carried_compile(cfg, unit) do
+    case Depdep.S3.metadata(cfg, unit.object) do
+      {:ok, %{"compile-us" => value}} ->
+        case Integer.parse(value) do
+          {us, ""} ->
+            Depdep.Compile.record(unit, us)
+            us
+
+          _ ->
+            nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp known_compile(unit) do
+    case Depdep.Compile.read(unit) do
+      {:ok, us} -> us
+      :none -> nil
+    end
+  end
+
   defp upload(provider, unit, cfg, base) do
     tmp = tmp_path()
 
@@ -587,11 +633,18 @@ defmodule Depdep.CLI do
     # doubling the schema for a direction that never mixes with the other.
     {restore_us, collected} = :timer.tc(fn -> provider.collect(unit, tmp) end)
 
+    # The compile time travels with the object, when this build measured it.
+    metadata =
+      case known_compile(unit) do
+        nil -> %{}
+        us -> %{"compile-us" => us}
+      end
+
     {upload_us, result, bytes} =
       case collected do
         :ok ->
           size = size_of(tmp)
-          {us, put} = :timer.tc(fn -> Depdep.S3.put(cfg, unit.object, tmp) end)
+          {us, put} = :timer.tc(fn -> Depdep.S3.put(cfg, unit.object, tmp, metadata) end)
           {us, put, size}
 
         other ->
@@ -656,173 +709,6 @@ defmodule Depdep.CLI do
             "reclamation may treat these objects as unreachable"
         )
     end
-  end
-
-  # Read-only, and deliberately needs no delete permission: it must be safe to
-  # run with the credentials a pipeline holds.
-  defp report(opts) do
-    case Depdep.S3.config() do
-      {:error, reason} ->
-        warn("store not configured (#{reason}) — nothing to report")
-
-      {:ok, cfg} ->
-        Depdep.S3.start()
-        within = Keyword.get(opts, :within, 30)
-
-        case Depdep.S3.list(cfg) do
-          {:ok, objects} -> render_report(cfg, objects, within)
-          {:error, reason} -> warn("could not list the store (#{reason})")
-        end
-    end
-  end
-
-  # Operator-run. A pipeline identity has Get and Put and not Delete, so a sweep
-  # with CI credentials fails on permissions — the guard is the credential, not
-  # this flag.
-  defp sweep(opts) do
-    case Depdep.S3.config() do
-      {:error, reason} ->
-        warn("store not configured (#{reason}) — nothing to sweep")
-
-      {:ok, cfg} ->
-        Depdep.S3.start()
-
-        case Depdep.S3.list(cfg) do
-          {:ok, objects} -> sweep_objects(cfg, objects, opts)
-          {:error, reason} -> warn("could not list the store (#{reason})")
-        end
-    end
-  end
-
-  defp sweep_objects(cfg, objects, opts) do
-    within = Keyword.get(opts, :within, 30)
-    {roots, _stored} = Enum.split_with(objects, &String.starts_with?(&1.key, Roots.prefix()))
-    fresh = Enum.filter(roots, &within?(&1, within))
-
-    if fresh == [] do
-      # A store nobody uses and a misconfigured invocation look identical from
-      # here, and one of them would have this delete everything.
-      warn("no root has been written in the last #{within} days — refusing to sweep")
-      warn("run --report first; if consumers really have stopped, widen --within")
-    else
-      live = reachable_set(cfg, fresh)
-
-      rules = [
-        grace_days: Keyword.get(opts, :grace, 2),
-        window_days: within,
-        keep_epochs: Keyword.get(opts, :keep_epochs, 2)
-      ]
-
-      doomed = Sweep.plan(objects, live, rules)
-      protected = Sweep.protected(objects, rules)
-
-      IO.puts(
-        "depdep: #{length(objects)} objects, #{length(fresh)} current roots, " <>
-          "#{protected} within the #{rules[:grace_days]}-day grace period"
-      )
-
-      Enum.each(doomed, fn {object, reason} ->
-        IO.puts(
-          "depdep: #{if opts[:confirm], do: "delete", else: "would delete"} #{object.key} — #{reason}"
-        )
-      end)
-
-      if opts[:confirm], do: delete_all(cfg, doomed), else: dry_run_summary(doomed)
-    end
-  end
-
-  defp dry_run_summary(doomed) do
-    IO.puts(
-      "depdep: #{length(doomed)} objects would be removed, #{mib(Enum.map(doomed, &elem(&1, 0)))} — " <>
-        "re-run with --confirm to remove them"
-    )
-  end
-
-  defp delete_all(cfg, doomed) do
-    removed =
-      Enum.count(doomed, fn {object, _reason} ->
-        case Depdep.S3.delete(cfg, object.key) do
-          :ok ->
-            true
-
-          {:error, reason} ->
-            warn("#{object.key}: delete failed (#{reason}) — leaving it")
-            false
-        end
-      end)
-
-    IO.puts("depdep: removed #{removed} of #{length(doomed)} objects")
-  end
-
-  defp render_report(cfg, objects, within) do
-    {roots, stored} = Enum.split_with(objects, &String.starts_with?(&1.key, Roots.prefix()))
-    {fresh, stale} = Enum.split_with(roots, &within?(&1, within))
-    reachable = reachable_set(cfg, fresh)
-
-    IO.puts("depdep: #{length(roots)} roots, #{length(fresh)} written in the last #{within} days")
-
-    if stale != [] do
-      IO.puts(
-        "depdep: #{length(stale)} roots older than that are ignored — their consumers have not built"
-      )
-    end
-
-    stored
-    |> Enum.group_by(&group(&1.key))
-    |> Enum.sort()
-    |> Enum.each(fn {group, group_objects} ->
-      {live, dead} = Enum.split_with(group_objects, &MapSet.member?(reachable, &1.key))
-
-      IO.puts(
-        "depdep: #{group}\t#{length(group_objects)} objects, #{mib(group_objects)} — " <>
-          "#{length(live)} reachable, #{length(dead)} not (#{mib(dead)})"
-      )
-    end)
-  end
-
-  # Every path a fresh root names. A root that cannot be read is reported and
-  # skipped: one malformed root must not make a whole store look unreachable.
-  defp reachable_set(cfg, roots) do
-    Enum.reduce(roots, MapSet.new(), fn root, acc ->
-      tmp = tmp_path()
-      result = Depdep.S3.get(cfg, root.key, tmp)
-
-      paths =
-        with :ok <- result,
-             {:ok, contents} <- File.read(tmp),
-             {:ok, paths} <- Roots.decode(contents) do
-          paths
-        else
-          {:error, reason} ->
-            warn("#{root.key}: unreadable root (#{inspect(reason)}) — ignoring it")
-            []
-        end
-
-      File.rm(tmp)
-      Enum.into(paths, acc)
-    end)
-  end
-
-  defp within?(%{last_modified: stamp}, days) do
-    case DateTime.from_iso8601(stamp) do
-      {:ok, at, _} -> DateTime.diff(DateTime.utc_now(), at, :day) <= days
-      _ -> false
-    end
-  end
-
-  # Object paths are readable by design — `v2/...`, `apt/v1/...`, `git/v1/...` —
-  # so the leading segments are the natural grouping.
-  defp group(key) do
-    case String.split(key, "/") do
-      ["v2" | _] -> "v2"
-      [provider, version | _] -> "#{provider}/#{version}"
-      [other | _] -> other
-    end
-  end
-
-  defp mib(objects) do
-    bytes = objects |> Enum.map(&(&1.size || 0)) |> Enum.sum()
-    "#{Float.round(bytes / 1_048_576, 1)} MiB"
   end
 
   # Bookkeeping: a note that cannot be written is reported and otherwise ignored.

@@ -51,6 +51,10 @@ defmodule Depdep.Metrics do
     moment the number exists — and `compile_exact` says whether Mix's own
     boundaries measured it (`true`) or rebar3's start and the next boundary did
     (`false`). `nil` on every other unit: absent is not zero (#59).
+
+    `saved_us` is set on a hit whose object carried a compile time: that time,
+    less what the transfer cost, floored at zero. `nil` for a hit on an object
+    stored before compile times were, and for everything that is not a hit.
     """
     defstruct [
       :provider,
@@ -59,6 +63,7 @@ defmodule Depdep.Metrics do
       :reason,
       :compile_us,
       :compile_exact,
+      :saved_us,
       offset_us: 0,
       download_us: 0,
       restore_us: 0,
@@ -86,6 +91,17 @@ defmodule Depdep.Metrics do
 
   @doc "Bytes moved in the phase."
   def bytes(%Phase{units: units}), do: units |> Enum.map(& &1.bytes) |> Enum.sum()
+
+  @doc """
+  Time the run's hits saved, summed over the units that know — or `nil` when
+  none does, which is "no information" rather than "nothing saved".
+  """
+  def saved_total_us(phases) do
+    case for %Phase{units: units} <- phases, %Unit{saved_us: us} <- units, us != nil, do: us do
+      [] -> nil
+      known -> Enum.sum(known)
+    end
+  end
 
   @doc """
   `sum_unit_us / span_us`, rounded — how many units were genuinely in flight.
@@ -117,6 +133,7 @@ defmodule Depdep.Metrics do
     %{
       direction: direction,
       elapsed_us: elapsed_us,
+      saved_total_us: saved_total_us(phases),
       phases: Enum.map(phases, &phase_map/1)
     }
   end
