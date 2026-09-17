@@ -116,7 +116,7 @@ defmodule Depdep.EnvSetTest do
 
     test "reads only: in each of Mix's three spellings", %{dir: dir} do
       File.write!(Path.join(dir, "mix.exs"), """
-      defmodule DepdepEnvSetFixture.MixProject do
+      defmodule DepdepEnvSetFixture#{System.unique_integer([:positive])}.MixProject do
         use Mix.Project
         def project, do: [app: :depdep_envset_fixture, version: "0.1.0", deps: deps()]
         defp deps do

@@ -28,6 +28,7 @@ defmodule Depdep.CLI do
     ref: :string,
     pull: :boolean,
     push: :boolean,
+    mix_get: :boolean,
     provider: :keep,
     project: :keep,
     exclude: :keep,
@@ -44,7 +45,8 @@ defmodule Depdep.CLI do
     with {:ok, opts} <- classify(parse(argv), :switch),
          :run <- disposition(opts),
          {:ok, providers} <-
-           classify(Provider.resolve(Keyword.get_values(opts, :provider)), :switch) do
+           classify(Provider.resolve(Keyword.get_values(opts, :provider)), :switch),
+         :ok <- classify(combination(opts, providers), :switch) do
       run(providers, opts)
     else
       :help ->
@@ -59,6 +61,31 @@ defmodule Depdep.CLI do
         problems |> List.wrap() |> Enum.each(&warn/1)
         warn(hint(class))
         System.halt(2)
+    end
+  end
+
+  @doc """
+  Whether the switches make sense together: `:ok`, or `{:error, message}`.
+
+  `--mix-get` runs `mix deps.get` between a pull's two passes, so it means
+  nothing without `--pull`, and nothing for a provider that has no `deps.get`.
+  Refused for the reason `parse/1` refuses an unknown switch: someone edited
+  the invocation, and silently doing less than they asked is how an afternoon
+  gets lost. Pure, so the message is testable without halting.
+  """
+  def combination(opts, providers) do
+    cond do
+      opts[:mix_get] != true ->
+        :ok
+
+      opts[:pull] != true ->
+        {:error, "--mix-get runs mix deps.get inside a pull, so it needs --pull"}
+
+      providers != [Depdep.Provider.Mix] ->
+        {:error, "--mix-get is for the mix provider only"}
+
+      true ->
+        :ok
     end
   end
 
@@ -240,6 +267,15 @@ defmodule Depdep.CLI do
     case Depdep.S3.config() do
       {:error, reason} ->
         warn("store not configured (#{reason}) — skipping #{direction}, nothing will break")
+
+        # The line this switch replaces ran `mix deps.get` whether or not a
+        # store existed, so an unconfigured store must not be how a fetch is
+        # silently skipped.
+        if opts[:mix_get] do
+          {_phases, status} = mix_get([], opts, nil)
+          if status != 0, do: System.halt(status)
+        end
+
         :ok
 
       {:ok, cfg} ->
@@ -255,8 +291,11 @@ defmodule Depdep.CLI do
         # and compiling depdep is the consumer's cost and varies with their
         # runner's cache — folding it in would put back exactly the noise this
         # number exists to remove.
-        {elapsed, phases} =
-          :timer.tc(fn -> Enum.map(providers, &transfer_provider(&1, opts, direction, cfg)) end)
+        {elapsed, {phases, exit_status}} =
+          :timer.tc(fn ->
+            phases = Enum.map(providers, &transfer_provider(&1, opts, direction, cfg))
+            if opts[:mix_get], do: mix_get(phases, opts, cfg), else: {phases, 0}
+          end)
 
         # The summary line is unchanged, deliberately: the tallies it renders are
         # now carried on the phases rather than returned instead of them.
@@ -268,14 +307,68 @@ defmodule Depdep.CLI do
 
         write_metrics(opts, phases, direction, elapsed)
         post_metrics(phases, direction, elapsed)
+
+        # After the summary and the metrics, never before: what the pull did is
+        # still true and still worth recording when the fetch that followed it
+        # failed. The status is `mix deps.get`'s own — the job fails here exactly
+        # as it would have on the bare line this replaces (#60).
+        if exit_status != 0, do: System.halt(exit_status)
     end
   end
+
+  # Own the middle line so the third can go: run `deps.get`, then decide again
+  # what the first pass could not. `Depdep.SecondPass` says which units that
+  # is; only those are transferred, and only the mix phase changes.
+  defp mix_get(phases, opts, cfg) do
+    root = Keyword.fetch!(opts, :root)
+    {projects, _notes} = Depdep.Layout.projects(root, opts)
+
+    case Depdep.Provider.Mix.Get.run(root, projects, Keyword.fetch!(opts, :env)) do
+      :ok ->
+        {Enum.map(phases, &second_pass(&1, opts, cfg)), 0}
+
+      {:error, {project, status}} ->
+        warn("mix deps.get failed in #{project} (exit #{status}) — the second pass is not run")
+        {phases, status}
+    end
+  end
+
+  defp second_pass(%Metrics.Phase{provider: "mix"} = phase, opts, cfg) do
+    provider = Depdep.Provider.Mix
+    {:ok, units, warnings} = provider.enumerate(opts)
+    Enum.each(warnings, &warn/1)
+
+    # The root is written again with the fuller list: a git dependency keyed
+    # only now is as needed as the rest, and the sweep must not miss it.
+    record_root(provider, units, opts, cfg)
+
+    {transfer, settled} = Depdep.SecondPass.plan(phase.units, units)
+    {span, {_tally, transferred}} = transfer_units(provider, transfer, :pull, cfg)
+    Depdep.SecondPass.merge(phase, settled, transferred, span)
+  end
+
+  defp second_pass(phase, _opts, _cfg), do: phase
 
   defp transfer_provider(provider, opts, direction, cfg) do
     {:ok, units, warnings} = provider.enumerate(opts)
     Enum.each(warnings, &warn/1)
     if direction == :pull, do: record_root(provider, units, opts, cfg)
 
+    concurrency = Depdep.S3.concurrency()
+    {span, {tally, unit_metrics}} = transfer_units(provider, units, direction, cfg)
+
+    %Metrics.Phase{
+      provider: Depdep.Provider.name(provider),
+      direction: direction,
+      span_us: span,
+      concurrency: concurrency,
+      tally: tally,
+      units: unit_metrics
+    }
+  end
+
+  # One concurrent phase over `units`: `{span_us, {tally, unit_metrics}}`.
+  defp transfer_units(provider, units, direction, cfg) do
     # `timeout: :infinity` is deliberate and is NOT "no timeout". `Depdep.S3`
     # gives `:httpc` a 15 s connect and 300 s request timeout, so a stuck
     # transfer comes back as `{:error, _}` — attributable to its unit, reported
@@ -296,27 +389,17 @@ defmodule Depdep.CLI do
     # that simply had little to do.
     phase_start = System.monotonic_time(:microsecond)
 
-    {span, {tally, unit_metrics}} =
-      :timer.tc(fn ->
-        units
-        |> Task.async_stream(&step(provider, &1, direction, cfg, phase_start),
-          max_concurrency: concurrency,
-          ordered: false,
-          timeout: :infinity
-        )
-        |> Enum.reduce({%{}, []}, fn {:ok, {bucket, metrics}}, {tally, acc} ->
-          {Report.count(tally, direction, bucket), [metrics | acc]}
-        end)
+    :timer.tc(fn ->
+      units
+      |> Task.async_stream(&step(provider, &1, direction, cfg, phase_start),
+        max_concurrency: concurrency,
+        ordered: false,
+        timeout: :infinity
+      )
+      |> Enum.reduce({%{}, []}, fn {:ok, {bucket, metrics}}, {tally, acc} ->
+        {Report.count(tally, direction, bucket), [metrics | acc]}
       end)
-
-    %Metrics.Phase{
-      provider: Depdep.Provider.name(provider),
-      direction: direction,
-      span_us: span,
-      concurrency: concurrency,
-      tally: tally,
-      units: unit_metrics
-    }
+    end)
   end
 
   # Never fails the run. A measurement that could break a pipeline would be a
@@ -693,6 +776,11 @@ defmodule Depdep.CLI do
                  unless --confirm is given)
       --pull     restore what the store has
       --push     upload what it does not
+      --mix-get  with --pull: run mix deps.get after the pull, then decide again
+                 what could not be decided before the source was on disk — a git
+                 dependency and its cone are pulled in the same invocation, so
+                 no second pull is needed. mix deps.get's exit status becomes
+                 depdep's; the store's failures stay warnings.
 
       --provider NAME operate on this artifact kind (repeatable).
                       Default: mix. Known: #{Provider.known()}

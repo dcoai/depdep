@@ -233,28 +233,43 @@ wrong. If depdep is public on your instance, skip all of this and use the plain
 
 ```yaml
 script:
-  - elixir scripts/depdep.exs --pull     # restore what the store has
-  - mix deps.get                         # fetch only what it did not
-  - elixir scripts/depdep.exs --pull     # git dependencies, now resolvable
+  - elixir scripts/depdep.exs --pull --mix-get || mix deps.get
   - mix compile
   - mix test
   - elixir scripts/depdep.exs --push     # upload what the store lacked
 ```
 
-**Pull twice if you have git dependencies, and skip the second if you do not.**
-A git lock entry records url, ref and opts and no dependency list, so before
-`mix deps.get` there is no way to know what it depends on — and since a
-dependency's compiled output is a function of its dependencies', it cannot be
-keyed, and neither can anything above it. One badly-placed fork disables caching
-for its whole cone.
+One line does three things, in an order that matters: it restores what the
+store has, runs `mix deps.get` to fetch only what it did not, and then decides
+again whatever could not be decided before the source was on disk. The
+`|| mix deps.get` is for the day depdep itself cannot start — its repository
+unreachable for `Mix.install`, say — so the job goes cold rather than red. If
+`deps.get` failed *inside* depdep it fails again outside, with the same error,
+and the job stops where it always would have.
 
-After `deps.get` the source is on disk and Mix has resolved the graph, so the
-second pull asks Mix for it and keys those dependencies properly. It costs a stat
-per dependency the first pull already restored — they report as `already present`
-— and buys the cone back.
+**Why the second decision.** A git lock entry records url, ref and opts and no
+dependency list, so before `mix deps.get` there is no way to know what it
+depends on — and since a dependency's compiled output is a function of its
+dependencies', it cannot be keyed, and neither can anything above it. One
+badly-placed fork disables caching for its whole cone. After `deps.get` the
+source is on disk and Mix has resolved the graph, so depdep asks Mix for it and
+keys those dependencies properly. This used to be a second `--pull` line the
+consumer had to remember (and two of four did not); with `--mix-get` it is
+depdep's own second pass, over only the units the first could not settle. The
+same pass re-reads the `MIX_ENV` question with the graph in hand, so a
+dependency the first pass could only call "maybe outside this env" is settled
+exactly.
 
-**Pull *before* `mix deps.get`, not after.** This is the one ordering mistake
-that looks like it works and is not. A stored object carries both the compiled
+**What `--mix-get` changes about failure.** `--pull` alone never fails a job.
+With `deps.get` inside it, a fetch that fails has to fail the job exactly as the
+bare `mix deps.get` line it replaced did — that is the consumer's fetch, not the
+store's — so `mix deps.get`'s exit status becomes depdep's, after the summary
+line and the metrics for what the pull did manage. Store trouble stays a warning
+and exit 0, and with no store configured at all `deps.get` still runs.
+
+**Pull *before* `mix deps.get`, not after** — which is why depdep orders them
+that way rather than leaving it to you. This is the one ordering mistake that
+looks like it works and is not. A stored object carries both the compiled
 `_build/` tree and the `deps/` source that produced it. If you fetch source
 first, `mix deps.get` writes files with fresh mtimes, Mix compares those against
 the restored build manifests, finds everything stale, and rebuilds all of it —
@@ -262,7 +277,7 @@ you get a perfect restore followed by a full recompile, and a pipeline *slower*
 than having no store at all. Measured, on the way to getting this right: 16 of
 16 dependencies restored, 16 recompiled, 9% slower than no store.
 
-The same reasoning is why the second pull is safe when a pull after `deps.get`
+The same reasoning is why the second pass is safe when a pull after `deps.get`
 would otherwise be the mistake above: an object carries **both** trees, and
 `erl_tar` restores the recorded mtimes, so extracting over freshly fetched source
 puts the build back ahead of it. That is asserted by a test rather than argued.
