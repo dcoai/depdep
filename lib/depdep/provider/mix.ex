@@ -29,11 +29,11 @@ defmodule Depdep.Provider.Mix do
     projects
     |> Enum.reduce({[], notes}, fn project, {units, warnings} ->
       case Depdep.keys_for(root, project, env) do
-        {:ok, keys, lock} ->
+        {:ok, keys, lock, verdicts} ->
           case Depdep.BuildPath.for_project(Path.join(root, project), env) do
             {:ok, build_path} ->
-              {units ++ units_for(root, project, env, keys, lock, direction, build_path),
-               warnings}
+              {units ++ units_for(root, project, env, keys, lock, verdicts, direction, build_path),
+               warnings ++ ambiguity(project, env, verdicts)}
 
             {:error, reason} ->
               {units, warnings ++ ["#{project}: #{reason} — skipping it"]}
@@ -46,13 +46,31 @@ defmodule Depdep.Provider.Mix do
     |> then(fn {units, warnings} -> {:ok, units, warnings} end)
   end
 
-  defp units_for(root, project, env, keys, lock, direction, build_path) do
+  # Before `deps.get`, a git dependency's children are unknown, so a lock entry
+  # the env walk did not reach may be one of them. Those are keyed and requested
+  # as they always were — the fail-safe direction — and said once per member,
+  # because the reader of `missing N` should know which part of it is this.
+  defp ambiguity(project, env, verdicts) do
+    case Enum.count(verdicts, fn {_, verdict} -> verdict == :ambiguous end) do
+      0 ->
+        []
+
+      n ->
+        [
+          "#{project}: #{n} dependencies may be outside MIX_ENV=#{env} but are requested " <>
+            "anyway — a git dependency's own dependencies are unknown before deps.get"
+        ]
+    end
+  end
+
+  defp units_for(root, project, env, keys, lock, verdicts, direction, build_path) do
     project_dir = Path.join(root, project)
 
     keys
     |> Enum.sort()
-    |> Enum.map(fn {name, resolution} ->
+    |> Enum.map(fn {name, keyed} ->
       entry = Map.fetch!(lock, name)
+      resolution = resolve(keyed, Map.fetch!(verdicts, name), env)
 
       %Unit{
         group: project,
@@ -71,12 +89,19 @@ defmodule Depdep.Provider.Mix do
     end)
   end
 
-  # A skipped dependency has no key, so it has no object and no version column.
+  # A dependency this env never builds is decided before its key matters: there
+  # is nothing to fetch and nothing to offer, whatever the key says. Everything
+  # else keeps the resolution the key computation gave it.
+  defp resolve(_keyed, :inactive, env), do: {:not_for_env, env}
+  defp resolve(keyed, _verdict, _env), do: keyed
+
+  # A skipped or excluded dependency has no key, so it has no object and no
+  # version column.
   defp object(name, entry, {:key, hash}), do: Depdep.Key.object(name, entry, hash)
-  defp object(_name, _entry, {:skip, _reason}), do: nil
+  defp object(_name, _entry, _unkeyed), do: nil
 
   defp detail(entry, {:key, _hash}), do: Depdep.Lock.version(entry)
-  defp detail(_entry, {:skip, _reason}), do: "-"
+  defp detail(_entry, _unkeyed), do: "-"
 
   @doc """
   Whether there is anything to do — and the two directions ask different
@@ -100,6 +125,7 @@ defmodule Depdep.Provider.Mix do
   # Called before `Depdep.Report.outcome/3` decides anything, so it is reached
   # for skipped units too. Its value is unused for those.
   def present?(%Unit{resolution: {:skip, _reason}}), do: false
+  def present?(%Unit{resolution: {:not_for_env, _env}}), do: false
 
   def present?(%Unit{context: %{direction: :push}} = unit), do: trees?(unit)
 
@@ -119,6 +145,7 @@ defmodule Depdep.Provider.Mix do
 
   @impl true
   def record(%Unit{resolution: {:skip, _reason}}), do: :ok
+  def record(%Unit{resolution: {:not_for_env, _env}}), do: :ok
 
   def record(%Unit{resolution: {:key, hash}} = unit) do
     path = note_path(unit)

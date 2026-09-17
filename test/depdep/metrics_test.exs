@@ -188,7 +188,7 @@ defmodule Depdep.MetricsTest do
       merged = Depdep.Report.merge(Enum.map([mix, apt], & &1.tally))
 
       assert Depdep.Report.render(:pull, merged) ==
-               "pulled 92, missing 1, already present 0, skipped 3"
+               "pulled 92, missing 1, already present 0, skipped 3, not for this env 0"
     end
   end
 end

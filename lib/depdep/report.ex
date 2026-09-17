@@ -21,6 +21,11 @@ defmodule Depdep.Report do
 
   Every bucket is printed even at zero. `skipped 0` is the sentence "nothing in
   this project is unkeyable", and that is worth reading.
+
+  `not for this env` is the one bucket decided before the key: a lock entry the
+  current `MIX_ENV` never builds (`Depdep.EnvSet`). It is neither a miss — the
+  store could not have had it — nor a skip, which means depdep *cannot* help.
+  Kept out of both so that `missing N` can trend to zero and mean it (#58).
   """
 
   @buckets %{
@@ -28,13 +33,15 @@ defmodule Depdep.Report do
       pulled: "pulled",
       missing: "missing",
       present: "already present",
-      skipped: "skipped"
+      skipped: "skipped",
+      not_for_env: "not for this env"
     ],
     push: [
       stored: "already stored",
       uploaded: "uploaded",
       not_built: "not built here",
-      skipped: "skipped"
+      skipped: "skipped",
+      not_for_env: "not for this env"
     ]
   }
 
@@ -49,6 +56,9 @@ defmodule Depdep.Report do
   what the store says.
   """
   def outcome(_direction, {:skip, _reason}, _complete?), do: {:done, :skipped}
+  # Decided before the key and before the disk: `MIX_ENV` will never build it,
+  # so a miss would be structural and a push would have nothing (#58).
+  def outcome(_direction, {:not_for_env, _env}, _complete?), do: {:done, :not_for_env}
   def outcome(:pull, {:key, _hash}, true), do: {:done, :present}
   def outcome(:pull, {:key, _hash}, false), do: {:network, :fetch}
   def outcome(:push, {:key, _hash}, false), do: {:done, :not_built}

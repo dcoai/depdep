@@ -41,7 +41,13 @@ defmodule Depdep do
   """
 
   @doc """
-  Project -> `{:ok, %{name => {:key, hash} | {:skip, reason}}, lock}` or `{:error, reason}`.
+  Project -> `{:ok, keys, lock, verdicts}` or `{:error, reason}`.
+
+  `keys` is `%{name => {:key, hash} | {:skip, reason}}` for every entry in the
+  lock, exactly as before. `verdicts` is `Depdep.EnvSet.classify/3`'s answer for
+  the same names — whether this `env` builds the entry at all — computed here
+  because it needs the graph this function already asked Mix for, and asking
+  twice would run `mix deps.tree` twice per member.
   """
   def keys_for(root, project, env) do
     project_dir = Path.join(root, project)
@@ -50,7 +56,8 @@ defmodule Depdep do
          config = Depdep.Config.read(project_dir, env, root),
          graph = graph_for(project_dir, env, lock),
          {:ok, keys} <- Depdep.Key.compute(lock, config, Depdep.Key.toolchain(env), graph) do
-      {:ok, keys, lock}
+      verdicts = Depdep.EnvSet.classify(Depdep.EnvSet.declared(project_dir, env), lock, graph)
+      {:ok, keys, lock, verdicts}
     else
       {:error, {:cycle, name}} -> {:error, "dependency cycle through #{name}"}
       {:error, reason} -> {:error, reason}

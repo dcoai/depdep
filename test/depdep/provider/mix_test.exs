@@ -45,7 +45,7 @@ defmodule Depdep.Provider.MixTest do
 
   describe "enumerate/1 produces exactly what the pre-seam path produced" do
     test "every object path matches Depdep.Key.object/3 computed directly", ctx do
-      {:ok, keys, lock} = Depdep.keys_for(ctx.root, "app", :test)
+      {:ok, keys, lock, _verdicts} = Depdep.keys_for(ctx.root, "app", :test)
 
       for {name, {:key, hash}} <- keys do
         expected = Depdep.Key.object(name, Map.fetch!(lock, name), hash)
@@ -54,7 +54,7 @@ defmodule Depdep.Provider.MixTest do
     end
 
     test "the keys themselves are unchanged", ctx do
-      {:ok, keys, _lock} = Depdep.keys_for(ctx.root, "app", :test)
+      {:ok, keys, _lock, _verdicts} = Depdep.keys_for(ctx.root, "app", :test)
 
       for {name, resolution} <- keys do
         assert ctx.by_name[name].resolution == resolution
@@ -105,6 +105,99 @@ defmodule Depdep.Provider.MixTest do
 
       assert length(warnings) == 1
       assert Enum.any?(units, &(&1.name == "jason"))
+    end
+  end
+
+  # #58: with a mix.exs to read, a lock entry the env never builds is resolved
+  # before any key or network call. The fixture above has no mix.exs, which is
+  # why every entry there is still keyed — `Depdep.EnvSet.declared/2` answers
+  # `:unknown` and nothing changes.
+  describe "enumerate/1 under a MIX_ENV that never builds part of the lock" do
+    setup %{root: root} do
+      dir = Path.join(root, "envapp")
+      File.mkdir_p!(dir)
+
+      File.write!(Path.join(dir, "mix.exs"), """
+      defmodule DepdepMixEnvFixture.MixProject do
+        use Mix.Project
+        def project, do: [app: :depdep_mix_env_fixture, version: "0.1.0", deps: deps()]
+        defp deps, do: [{:jason, "~> 1.4"}, {:ex_doc, "~> 0.34", only: :dev}]
+      end
+      """)
+
+      File.write!(Path.join(dir, "mix.lock"), """
+      %{
+        "jason": {:hex, :jason, "1.4.4", "innerjason", [:mix], [], "hexpm", "outerjason"},
+        "ex_doc": {:hex, :ex_doc, "0.34.0", "innerexdoc", [:mix], [{:makeup, "~> 1.0", [hex: :makeup, repo: "hexpm", optional: false]}], "hexpm", "outerexdoc"},
+        "makeup": {:hex, :makeup, "1.1.0", "innermakeup", [:mix], [], "hexpm", "outermakeup"}
+      }
+      """)
+
+      :ok
+    end
+
+    test "the dev-only chain is not_for_env under test, with no object and no detail", %{
+      root: root
+    } do
+      {:ok, units, warnings} = Provider.Mix.enumerate(root: root, env: :test, project: "envapp")
+      by_name = Map.new(units, &{&1.name, &1})
+
+      assert warnings == []
+      assert {:key, _} = by_name["jason"].resolution
+      assert by_name["ex_doc"].resolution == {:not_for_env, :test}
+      assert by_name["makeup"].resolution == {:not_for_env, :test}
+      assert by_name["ex_doc"].object == nil
+      assert by_name["ex_doc"].detail == "-"
+      refute Provider.Mix.present?(by_name["ex_doc"])
+    end
+
+    test "the same chain is keyed under dev", %{root: root} do
+      {:ok, units, _} = Provider.Mix.enumerate(root: root, env: :dev, project: "envapp")
+      assert Enum.all?(units, &match?({:key, _}, &1.resolution))
+    end
+
+    # Before deps.get a git dependency's children are unknown, so the walk cannot
+    # prove the chain is outside the env. It is requested as before, and the
+    # reader of `missing N` is told why part of it may never become a hit.
+    test "a git dependency with unknown children keeps the rest requested, with one warning", %{
+      root: root
+    } do
+      dir = Path.join(root, "envapp")
+
+      File.write!(Path.join(dir, "mix.exs"), """
+      defmodule DepdepMixEnvFixtureGit.MixProject do
+        use Mix.Project
+        def project, do: [app: :depdep_mix_env_fixture_git, version: "0.1.0", deps: deps()]
+        defp deps, do: [{:jason, "~> 1.4"}, {:forked, git: "https://example.invalid/forked.git"}, {:ex_doc, "~> 0.34", only: :dev}]
+      end
+      """)
+
+      lock = File.read!(Path.join(dir, "mix.lock"))
+
+      File.write!(
+        Path.join(dir, "mix.lock"),
+        String.replace(
+          lock,
+          "%{",
+          ~s(%{\n  "forked": {:git, "https://example.invalid/forked.git", "88ab3a0d", []},)
+        )
+      )
+
+      {:ok, units, warnings} = Provider.Mix.enumerate(root: root, env: :test, project: "envapp")
+      by_name = Map.new(units, &{&1.name, &1})
+
+      assert {:key, _} = by_name["ex_doc"].resolution
+      assert [warning] = warnings
+      assert warning =~ "2 dependencies may be outside MIX_ENV=test"
+      assert warning =~ "before deps.get"
+    end
+
+    # A unit that is never fetched must not be listed as wanted, or the sweep
+    # would keep objects for it that will never exist.
+    test "a not_for_env unit contributes nothing to the root", %{root: root} do
+      {:ok, units, _} = Provider.Mix.enumerate(root: root, env: :test, project: "envapp")
+      paths = units |> Enum.map(& &1.object) |> Enum.reject(&is_nil/1)
+      assert length(paths) == 1
     end
   end
 
