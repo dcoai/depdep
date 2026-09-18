@@ -19,7 +19,7 @@ variables:
   # running an instruction.
   ERL_MAX_PORTS: "65536"
 
-stages: [test]
+stages: [test, publish]
 
 test:
   stage: test
@@ -32,3 +32,15 @@ test:
     # provisional again (#69). The suite runs the same check; this is the line
     # a reader of a red pipeline sees.
     - mix depdep.profile check
+
+# The metresis profile is published on tags only, with an admin token that
+# exists only for tag pipelines (DEPDEP_METRESIS_ADMIN_TOKEN: protected, masked).
+# Publishing and adopting change what the CI domain means, so this never runs
+# on a branch, and the ingest token the consumers hold could not do it (#69).
+publish-profile:
+  stage: publish
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v/
+  script:
+    - mix depdep.profile check
+    - mix depdep.profile publish
