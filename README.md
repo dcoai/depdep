@@ -438,10 +438,14 @@ a bug worth reporting.
   Normally it means you pushed before the build, or the build never needed
   that dependency.
 - **`skipped N`** is the only number that means depdep *cannot help*: a
-  dependency it will not key, almost always one taken from a git remote — the
-  lockfile carries no dependency list for it, so no Merkle key can be computed.
-  Its dependents are skipped with it, which is why one git dependency can
-  account for several.
+  dependency it will not key. Before `mix deps.get` that is every git
+  dependency — the lockfile carries no dependency list for it, so no Merkle
+  key can be computed — and its dependents are skipped with it, which is why
+  one git dependency can account for several. After `deps.get` depdep asks Mix
+  for the graph and keys them, so with `--mix-get` a git dependency ends the
+  same invocation `pulled` or `missing`, never `skipped`. A `skipped N` that
+  persists across the second pass is worth reading: it is a dependency Mix did
+  not resolve for this env at all.
 - **`not for this env N`** is a lock entry the current `MIX_ENV` never builds:
   `ex_doc` and its chain under `MIX_ENV=test`, say, when it is declared
   `only: :dev`. The lock lists every dependency resolved under *any*

@@ -139,6 +139,19 @@ defmodule Depdep.KeyTest do
       assert is_binary(hash)
     end
 
+    # #68: a leaf the graph names is known-and-empty, and keyed; one the graph
+    # does not name is still unknown, and still skipped with the same reason.
+    test "a leaf git dependency is keyed when the graph names it, skipped when it does not" do
+      lock = [git("forked"), hex("spark", "2.6.0", [])]
+
+      assert {:key, _} = keys_with_graph(lock, %{"app" => ["forked"], "forked" => []})["forked"]
+
+      assert {:skip, reason} =
+               keys_with_graph(lock, %{"app" => ["spark"], "spark" => []})["forked"]
+
+      assert reason =~ "git"
+    end
+
     # The whole reason a sha-only key would be wrong, and the same argument the
     # recursion exists for: spark's macros expand into the fork's beams, so its
     # correct bytecode moves while its ref does not.

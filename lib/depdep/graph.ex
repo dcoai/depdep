@@ -73,19 +73,32 @@ defmodule Depdep.Graph do
   end
 
   @doc """
-  Edges out of a DOT graph, as `%{parent => [child]}`.
+  The DOT graph as `%{node => [child]}` — **every node an edge names**, so a
+  leaf is present with `[]`.
+
+  That presence is the whole answer to #68. `Depdep.Lock.children/3` reads a
+  git entry's children from this map and calls a missing key `:unknown`, the
+  same as having no graph at all. A parents-only map made every git
+  dependency with no dependencies of its own — `dco-tek/visualize`'s `surfex`
+  — unknown forever, and skipped on every pull, before and after `deps.get`,
+  while the README told the reader that was the expected steady state. A leaf
+  Mix resolved is known and empty; only a name the dot never mentions is
+  unknown, because that is a dependency Mix did not resolve for this env.
 
   Public because it is the contract with `mix deps.tree` and the only part of
   this testable without a Mix project. Lines that are not edges — the digraph
-  header, a bare node, the closing brace — are ignored rather than guessed at.
+  header, a bare node, the closing brace — are ignored rather than guessed at;
+  a node reached by no edge is not in the graph.
   """
   def parse(contents) do
     ~r/"(?<parent>[^"]+)"\s*->\s*"(?<child>[^"]+)"/
     |> Regex.scan(contents, capture: :all_names)
     |> Enum.reduce(%{}, fn [child, parent], acc ->
-      Map.update(acc, parent, [child], &(&1 ++ [child]))
+      acc
+      |> Map.update(parent, [child], &(&1 ++ [child]))
+      |> Map.put_new(child, [])
     end)
-    |> Map.new(fn {parent, children} -> {parent, children |> Enum.uniq() |> Enum.sort()} end)
+    |> Map.new(fn {node, children} -> {node, children |> Enum.uniq() |> Enum.sort()} end)
   end
 
   defp summary(output) do
