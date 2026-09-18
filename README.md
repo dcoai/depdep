@@ -191,6 +191,13 @@ carries the project, commit, ref, pipeline and job that GitLab already puts in
 the environment — so **no pipeline needs editing**. The token names the domain,
 so depdep never says where to write.
 
+**The vocabulary is `profiles/depdep.exs`**, the profile metresis §3.3 calls
+for — units, polarity, descriptions, the label keys and their expected values,
+and a starter dashboard — owned here because the metrics are depdep's
+(metresis #206). `mix depdep.profile check` holds it to what the code emits,
+both ways, and runs in CI: a metric added without it cannot land, and neither
+can a definition nothing will ever fill.
+
 `depdep.parallelism` is the one worth explaining. Units transfer 8–32 at a time,
 so the summed per-unit time normally *exceeds* the wall-clock span containing
 it, and the ratio is how many were genuinely in flight. Read against
