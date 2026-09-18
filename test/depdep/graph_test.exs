@@ -22,11 +22,22 @@ defmodule Depdep.GraphTest do
   describe "parse/1" do
     # The edge is the whole point: a git lock entry has url, ref and opts and no
     # child list, and this is what supplies the missing link.
-    test "reads the edges" do
+    test "reads the edges, and names every node they touch" do
       assert Graph.parse(@dot) == %{
                "probe" => ["plug"],
-               "plug" => ["mime", "plug_crypto", "telemetry"]
+               "plug" => ["mime", "plug_crypto", "telemetry"],
+               "mime" => [],
+               "plug_crypto" => [],
+               "telemetry" => []
              }
+    end
+
+    # #68: a git dependency with no dependencies of its own is a child and
+    # never a parent. A parents-only map had no entry for it, which
+    # `Lock.children/3` read as "unknown" — the same as no graph — so it was
+    # skipped on every pull, forever, and visualize's `surfex` never cached.
+    test "a leaf is present with no children — known, not unknown" do
+      assert Graph.parse(~s("app" -> "leaf")) == %{"app" => ["leaf"], "leaf" => []}
     end
 
     # The label is Mix's resolution INPUT. What was chosen is in the lock, and
@@ -46,7 +57,7 @@ defmodule Depdep.GraphTest do
 
     test "children are sorted and deduplicated, so a graph is a function of its edges" do
       dot = ~s("a" -> "c"\n"a" -> "b"\n"a" -> "b")
-      assert Graph.parse(dot) == %{"a" => ["b", "c"]}
+      assert Graph.parse(dot) == %{"a" => ["b", "c"], "b" => [], "c" => []}
     end
   end
 

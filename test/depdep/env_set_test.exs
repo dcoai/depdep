@@ -75,6 +75,18 @@ defmodule Depdep.EnvSetTest do
       assert verdicts["nimble_parsec"] == :ambiguous
     end
 
+    # #68: a git dependency with no children of its own is the common case,
+    # and it must not leave the rest of the lock ambiguous once the graph is in.
+    test "a leaf git dependency the graph names makes the verdicts exact" do
+      lock = Map.put(lock(), "forked", git(:forked))
+      graph = %{"app" => ["jason", "forked"], "jason" => [], "forked" => []}
+      verdicts = EnvSet.classify(["jason", "forked"], lock, graph)
+
+      assert verdicts["forked"] == :active
+      assert verdicts["ex_doc"] == :inactive
+      refute Enum.any?(verdicts, fn {_, v} -> v == :ambiguous end)
+    end
+
     test "the graph resolves the ambiguity exactly" do
       lock = Map.put(lock(), "forked", git(:forked))
       graph = %{"forked" => ["earmark_parser"]}
