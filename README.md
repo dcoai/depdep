@@ -196,7 +196,11 @@ for — units, polarity, descriptions, the label keys and their expected values,
 and a starter dashboard — owned here because the metrics are depdep's
 (metresis #206). `mix depdep.profile check` holds it to what the code emits,
 both ways, and runs in CI: a metric added without it cannot land, and neither
-can a definition nothing will ever fill.
+can a definition nothing will ever fill. On every `v*` tag, `mix depdep.profile
+publish` POSTs it to `DEPDEP_METRESIS_URL` with an admin token
+(`DEPDEP_METRESIS_ADMIN_TOKEN`, a protected variable that exists only for tag
+pipelines) and adopts it on the CI domain — so a release is what brings new
+definitions, and nobody adopts anything by hand.
 
 `depdep.parallelism` is the one worth explaining. Units transfer 8–32 at a time,
 so the summed per-unit time normally *exceeds* the wall-clock span containing

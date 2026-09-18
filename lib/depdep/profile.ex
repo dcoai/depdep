@@ -25,6 +25,9 @@ defmodule Depdep.Profile do
 
   alias Depdep.{Metresis, Metrics, Report}
 
+  @connect_timeout 5_000
+  @request_timeout 15_000
+
   @path Path.expand("../../profiles/depdep.exs", __DIR__)
 
   @doc "Where the document lives, for the task's messages."
@@ -152,6 +155,44 @@ defmodule Depdep.Profile do
       [] -> :ok
       problems -> {:error, problems}
     end
+  end
+
+  @doc """
+  Publishes the document to a metresis instance: `POST /api/v1/profiles`,
+  bearer `token`, `adopt: true` unless `adopt: false` is given (metresis §7.11).
+
+  `:ok`, or `{:error, message}` carrying the server's answer. The token is an
+  **admin** one — publishing a vocabulary and adopting it change what a domain
+  means — and this is the only request depdep makes with one; the ingest token
+  never reaches here. `:httpc` and `Depdep.Json`, as `Depdep.Metresis.post/3`,
+  with its timeouts: no client dependency, and no YAML.
+  """
+  def publish(document, url, token, opts \\ []) do
+    :ok = start_httpc()
+
+    body =
+      if Keyword.get(opts, :adopt, true), do: Map.put(document, "adopt", true), else: document
+
+    endpoint = String.trim_trailing(url, "/") <> "/api/v1/profiles"
+
+    request =
+      {String.to_charlist(endpoint),
+       [{~c"authorization", ~c"Bearer " ++ String.to_charlist(token)}], ~c"application/json",
+       Depdep.Json.encode(body)}
+
+    http_options = [connect_timeout: @connect_timeout, timeout: @request_timeout]
+
+    case :httpc.request(:post, request, http_options, body_format: :binary) do
+      {:ok, {{_, status, _}, _, answer}} when status in 200..299 -> {:ok, answer}
+      {:ok, {{_, status, _}, _, answer}} -> {:error, "#{status}: #{String.slice(answer, 0, 500)}"}
+      {:error, reason} -> {:error, inspect(reason)}
+    end
+  end
+
+  defp start_httpc do
+    {:ok, _} = Application.ensure_all_started(:inets)
+    {:ok, _} = Application.ensure_all_started(:ssl)
+    :ok
   end
 
   defp missing(from, in_set, what) do

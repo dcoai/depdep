@@ -1,5 +1,5 @@
 defmodule Depdep.ProfileTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Depdep.Profile
 
@@ -81,6 +81,124 @@ defmodule Depdep.ProfileTest do
 
     assert {:error, ["profile expects a bucket value the code has not vanished"]} =
              Profile.check(extra)
+  end
+
+  # §7.11's emitter side: one POST, admin bearer, the document plus `adopt`.
+  describe "publish/4" do
+    defp server(status, body) do
+      {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true, packet: :raw])
+      {:ok, port} = :inet.port(listen)
+      me = self()
+
+      spawn_link(fn ->
+        {:ok, socket} = :gen_tcp.accept(listen)
+        received = read_request(socket, "")
+        send(me, {:received, received})
+
+        :gen_tcp.send(socket, [
+          "HTTP/1.1 #{status} X\r\ncontent-length: #{byte_size(body)}\r\n",
+          "content-type: application/json\r\n\r\n",
+          body
+        ])
+
+        :gen_tcp.close(socket)
+      end)
+
+      port
+    end
+
+    defp read_request(socket, acc) do
+      case :gen_tcp.recv(socket, 0, 2_000) do
+        {:ok, data} ->
+          acc = acc <> data
+
+          case String.split(acc, "\r\n\r\n", parts: 2) do
+            [head, body] ->
+              [_, len] = Regex.run(~r/content-length: (\d+)/i, head)
+
+              if byte_size(body) >= String.to_integer(len),
+                do: acc,
+                else: read_request(socket, acc)
+
+            _ ->
+              read_request(socket, acc)
+          end
+
+        {:error, _} ->
+          acc
+      end
+    end
+
+    defp received do
+      receive do
+        {:received, raw} -> raw
+      after
+        3_000 -> flunk("the server received no request")
+      end
+    end
+
+    test "POSTs the document with adopt: true and the admin bearer" do
+      port = server(201, ~s({"key":"depdep","version":1,"adopted":true}))
+      url = "http://127.0.0.1:#{port}/"
+
+      assert {:ok, answer} =
+               Profile.publish(%{"key" => "depdep", "name" => "Depdep"}, url, "mtr_adm_x")
+
+      assert answer =~ "adopted"
+
+      raw = received()
+      [head, body] = String.split(raw, "\r\n\r\n", parts: 2)
+      assert head =~ "POST /api/v1/profiles HTTP/1.1"
+      assert head =~ "authorization: Bearer mtr_adm_x"
+      assert head =~ "content-type: application/json"
+      assert body =~ ~s("adopt":true)
+      assert body =~ ~s("key":"depdep")
+    end
+
+    test "adopt: false leaves the flag out" do
+      port = server(200, "{}")
+
+      assert {:ok, _} =
+               Profile.publish(%{"key" => "depdep"}, "http://127.0.0.1:#{port}", "t",
+                 adopt: false
+               )
+
+      refute received() =~ "adopt"
+    end
+
+    test "a refusal carries the server's answer" do
+      port = server(422, ~s({"errors":["metric depdep.warmth: unknown quantity"]}))
+
+      assert {:error, message} =
+               Profile.publish(%{"key" => "depdep"}, "http://127.0.0.1:#{port}", "t")
+
+      assert message =~ "422"
+      assert message =~ "depdep.warmth"
+    end
+
+    test "an unreachable instance is an error, not a hang or a raise" do
+      assert {:error, _} = Profile.publish(%{"key" => "depdep"}, "http://127.0.0.1:1", "t")
+    end
+  end
+
+  # Doing nothing quietly is how a domain stays on provisional definitions;
+  # the task is only run where publishing is intended, so a missing variable
+  # stops it and names itself.
+  test "mix depdep.profile publish refuses to run without its variables" do
+    System.delete_env("DEPDEP_METRESIS_URL")
+    System.delete_env("DEPDEP_METRESIS_ADMIN_TOKEN")
+
+    assert_raise Mix.Error, ~r/DEPDEP_METRESIS_URL is not set/, fn ->
+      Mix.Tasks.Depdep.Profile.run(["publish"])
+    end
+
+    System.put_env("DEPDEP_METRESIS_URL", "http://127.0.0.1:1")
+
+    assert_raise Mix.Error, ~r/DEPDEP_METRESIS_ADMIN_TOKEN is not set/, fn ->
+      Mix.Tasks.Depdep.Profile.run(["publish"])
+    end
+
+    System.delete_env("DEPDEP_METRESIS_URL")
   end
 
   test "the metrics' enumerations are ones metresis accepts" do
