@@ -22,6 +22,18 @@ defmodule Depdep.MixProjectTest do
     assert File.read!("CHANGELOG.md") =~ "## v#{@project[:version]} —"
   end
 
+  # The README is the package's front page on hexdocs. A reader there has no
+  # dco-tek credential, so nothing in it may point at the private host, and the
+  # first install form has to be the one that works from hex (#76).
+  test "the README is written for a reader outside the private network" do
+    readme = File.read!("README.md")
+    refute readme =~ "conet.yarina.org"
+    refute readme =~ "dco-tek"
+
+    [first_install | _] = Regex.scan(~r/Mix\.install\(\[\{:depdep, ([^}]+)\}\]\)/, readme)
+    assert [_, ~s("~> ) <> _] = first_install
+  end
+
   # Depdep runs before `mix deps.get`; a dependency would have to be fetched by
   # the machinery it exists to get in front of (README, "Why no dependencies").
   test "there are no dependencies" do
