@@ -14,6 +14,17 @@ defmodule Depdep.ProfileTest do
     assert json =~ ~s("depdep.saved_total")
   end
 
+  # A hex install ships `lib/` and `priv/` and nothing else, so the document
+  # has to be found through the application's priv dir. `__DIR__` was how the
+  # first version found it (#73) — a path into a source tree the package does
+  # not carry.
+  test "the document lives in the application's priv/, not in the source tree" do
+    priv = :code.priv_dir(:depdep) |> to_string()
+    assert String.starts_with?(Profile.path(), priv)
+    assert File.regular?(Profile.path())
+    refute File.read!("lib/depdep/profile.ex") =~ "__DIR__"
+  end
+
   test "the shipped document agrees with the code, both ways" do
     assert Profile.check() == :ok
   end

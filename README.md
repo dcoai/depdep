@@ -191,7 +191,7 @@ carries the project, commit, ref, pipeline and job that GitLab already puts in
 the environment — so **no pipeline needs editing**. The token names the domain,
 so depdep never says where to write.
 
-**The vocabulary is `profiles/depdep.exs`**, the profile metresis §3.3 calls
+**The vocabulary is `priv/profiles/depdep.exs`**, the profile metresis §3.3 calls
 for — units, polarity, descriptions, the label keys and their expected values,
 and a starter dashboard — owned here because the metrics are depdep's
 (metresis #206). `mix depdep.profile check` holds it to what the code emits,

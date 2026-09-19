@@ -2,7 +2,7 @@ defmodule Mix.Tasks.Depdep.Profile do
   @shortdoc "Checks the depdep profile against the code, or publishes it to metresis"
 
   @moduledoc """
-  The depdep profile (`profiles/depdep.exs`) is the vocabulary depdep posts to
+  The depdep profile (`priv/profiles/depdep.exs`) is the vocabulary depdep posts to
   metresis: metric keys, units, polarity, label keys and a dashboard. It is
   owned here rather than in metresis (metresis #206), so it has to be held to
   the code it describes, and it has to reach metresis from here.
