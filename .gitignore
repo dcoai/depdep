@@ -8,3 +8,5 @@ erl_crash.dump
 *.beam
 /config/*.secret.exs
 .elixir_ls/
+# mix hex.build without --output writes the package here
+/depdep-*.tar
