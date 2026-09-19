@@ -165,8 +165,8 @@ concurrency it never used, which is the failure the variable exists to avoid.
 ### Reporting to metresis
 
 **With `DEPDEP_METRESIS_URL` and `DEPDEP_METRESIS_TOKEN` both set**, depdep posts
-what a run cost to a [metresis](https://gitlab.conet.yarina.org/dco-tek/metresis)
-instance. With either unset it sends nothing and opens no connection.
+what a run cost to a metresis instance. With either unset it sends nothing and
+opens no connection.
 
 Why bother, when the summary line already prints a duration: because one sample
 of a pipeline timing answers nothing. Job durations on a busy runner vary three
@@ -193,11 +193,11 @@ so depdep never says where to write.
 
 **The vocabulary is `priv/profiles/depdep.exs`**, the profile metresis §3.3 calls
 for — units, polarity, descriptions, the label keys and their expected values,
-and a starter dashboard — owned here because the metrics are depdep's
-(metresis #206). `mix depdep.profile check` holds it to what the code emits,
-both ways, and runs in CI: a metric added without it cannot land, and neither
-can a definition nothing will ever fill. On every `v*` tag, `mix depdep.profile
-publish` POSTs it to `DEPDEP_METRESIS_URL` with an admin token
+and a starter dashboard — owned here because the metrics are depdep's.
+`mix depdep.profile check` holds it to what the code emits, both ways, and runs
+in CI: a metric added without it cannot land, and neither can a definition
+nothing will ever fill. On every `v*` tag, `mix depdep.profile publish` POSTs
+it to `DEPDEP_METRESIS_URL` with an admin token
 (`DEPDEP_METRESIS_ADMIN_TOKEN`, a protected variable that exists only for tag
 pipelines) and adopts it on the CI domain — so a release is what brings new
 definitions, and nobody adopts anything by hand.
@@ -220,9 +220,22 @@ Depdep runs *before* `mix deps.get`, so it cannot be a dependency in your
 `mix.exs` — that would be circular. Commit this as `scripts/depdep.exs`:
 
 ```elixir
-# Depdep lives in a private project, so the URL has to carry credentials, and
-# what is available differs between a developer's machine and a CI container.
-# A developer has an ssh key; a job has CI_JOB_TOKEN and no key at all.
+Mix.install([{:depdep, "~> 0.5"}])
+
+Depdep.CLI.main(System.argv())
+```
+
+`Mix.install/2` fetches into its own cache, independent of your project's
+`deps/`, so there is no ordering problem and no root Mix project required.
+
+**Until depdep is on hex.pm — and as of this version it is not; v0.5.0 will be
+the first release published there — install it from git instead.** The git
+form also stays the way to run a commit that has no release yet:
+
+```elixir
+# A private repository's URL has to carry credentials, and what is available
+# differs between a developer's machine and a CI container: a developer has an
+# ssh key, a job has CI_JOB_TOKEN and no key at all.
 url =
   case System.get_env("CI_JOB_TOKEN") do
     nil -> "git@gitlab.example.com:group/depdep.git"
@@ -233,9 +246,6 @@ Mix.install([{:depdep, git: url, tag: "v0.4.0"}])
 
 Depdep.CLI.main(System.argv())
 ```
-
-`Mix.install/2` fetches into its own cache, independent of your project's
-`deps/`, so there is no ordering problem and no root Mix project required.
 
 **For the CI half to work, depdep must allow it.** In depdep's
 *Settings -> CI/CD -> Job token permissions*, add the consuming project to the
@@ -729,36 +739,40 @@ set it makes cheaper is precisely depdep's `missing N`.
 
 ## Status
 
-**Running.** `dco-tek/metresis` uses the store in CI, and found two of the
-defects fixed in v0.1.0 — the 403 on any key holding a reserved character, and a
-`build_path` that made depdep serve a directory Mix never reads. Adoption
-proposals are open for `dco-tek/bizex` (#31 there), `dco-tek/extc` (#154) and
-`dco-tek/agentronic` (#2007). bizex still runs the 1,146-line script this package
-was extracted from.
+**In use.** Depdep runs first in the CI of the projects it was built
+alongside, restoring compiled Elixir dependencies and Debian packages on every
+pipeline. It found its first two defects there — a 403 on any key holding a
+reserved character, and a `build_path` that made it serve a directory Mix never
+reads — both fixed in v0.1.0. What each release changed is in
+[CHANGELOG.md](CHANGELOG.md).
 
-**Measured.** Extracted from bizex, where the original ran in CI: 148 stored
-objects, zero dependencies recompiled, pipeline ~28 minutes to 6m24s. The
-extraction is verified against that live store — the same eleven projects compute
-**564 byte-identical keys**, and every one of the 148 objects already there is one
-this code asks for. That remains the best evidence the key rules are right.
+**Measured.** The pipeline this was extracted from went from ~28 minutes to
+6m24s across 148 stored objects, with zero dependencies recompiled. The
+extraction was verified against that store: the same eleven projects compute
+**564 byte-identical keys**, and every object already there is one this code
+asks for. That remains the best evidence the key rules are right. On current
+pipelines a pull costs 1.3–1.6 s for 44 Debian packages and 3.2–4.2 s for
+~50 compiled dependencies, over the network. A restored git mirror measured
+2.43 s cold against 0.57 s on a 7.4 MB repository.
 
-A restored git mirror measured 2.43 s cold against 0.57 s on a 7.4 MB repository,
-over the network.
+**Not yet verified, and worth knowing before relying on it.** Each mechanism
+below is tested; the pipeline-level confirmation is what is missing.
 
-**Not measured, and worth knowing before relying on it.** Three things shipped
-with their acceptance criteria unmet, because no store and no root shell were
-reachable from where the work was done:
-
-- **The concurrency figure is synthetic.** 200 objects, 4.40 s to 0.16 s, against
-  a local socket with injected latency. That isolates whether transfers overlap
-  and nothing else — no TLS, no real object sizes, no tar extraction competing
-  for CPU. It is an upper bound, not a prediction; real objects average ~1.1 MiB,
-  so transfer is a larger share of each request and the speedup will be smaller.
-  Issue #12 says what to run.
-- **Nothing has watched `apt-get install` consume a restored `.deb`.** The
-  filename and checksum are tested against a real apt, and the last link — that
-  apt then uses the file rather than re-fetching it — needs root. Issue #14
-  carries the one-job check.
+- **The concurrency speedup is a synthetic figure.** 200 objects, 4.40 s to
+  0.16 s, against a local socket with injected latency — an upper bound, not a
+  prediction. `DEPDEP_CONCURRENCY=1` exists so the real comparison is two
+  pipelines on one commit; it has not been run, and job-duration noise on a
+  busy runner is 20–40× depdep's whole cost, so it needs interleaved repeats
+  and a narrow timing window rather than one before/after pair.
+- **Nothing has watched `apt-get install` consume a restored `.deb`.** A root
+  job restores every file apt said it would fetch (`missing 0`) and the install
+  succeeds, but it runs `apt-get install -qq`, which hides the fetch lines that
+  would prove apt used the file rather than re-downloading it. The check is one
+  `-q` instead of `-qq`, or a read of `/var/log/apt/history.log`.
 - **Reclamation has never run against a real bucket.** The rules are tested and
   the S3 verbs are exercised over a socket, but no `--report` or `--sweep` has
   seen a live store.
+
+**Not on hex.pm yet.** The package builds (`mix hex.build`) and carries its
+license, but v0.5.0 will be the first version published; until then install it
+from git as [Getting started](#3-add-the-bootstrap-script) shows.
