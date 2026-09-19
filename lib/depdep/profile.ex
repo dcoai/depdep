@@ -1,6 +1,6 @@
 defmodule Depdep.Profile do
   @moduledoc """
-  The depdep profile — `profiles/depdep.exs` — and the check that keeps it
+  The depdep profile — `priv/profiles/depdep.exs` — and the check that keeps it
   honest against what `Depdep.Metresis` emits.
 
   No depdep profile ever existed. Nine metrics had been posting since v0.3.0 as
@@ -28,10 +28,15 @@ defmodule Depdep.Profile do
   @connect_timeout 5_000
   @request_timeout 15_000
 
-  @path Path.expand("../../profiles/depdep.exs", __DIR__)
+  @doc """
+  Where the document lives, for the task's messages.
 
-  @doc "Where the document lives, for the task's messages."
-  def path, do: @path
+  Resolved at runtime through the application's `priv/`, never fixed at
+  compile time relative to this file: a path into the source tree is wrong the
+  moment depdep is installed from a package, where `lib/` and `priv/` exist and
+  the source tree does not (#73).
+  """
+  def path, do: Path.join(:code.priv_dir(:depdep), "profiles/depdep.exs")
 
   @doc """
   The document, evaluated. A literal map with string keys, exactly what
@@ -42,7 +47,7 @@ defmodule Depdep.Profile do
   user-supplied profiles.
   """
   def read do
-    {document, _bindings} = Code.eval_file(@path)
+    {document, _bindings} = Code.eval_file(path())
     document
   end
 

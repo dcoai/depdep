@@ -27,7 +27,7 @@ test:
     - mix format --check-formatted
     - mix compile --warnings-as-errors
     - mix test
-    # The metresis profile (profiles/depdep.exs) is held to what the code
+    # The metresis profile (priv/profiles/depdep.exs) is held to what the code
     # emits, both ways — a metric added without it would post as a bare
     # provisional again (#69). The suite runs the same check; this is the line
     # a reader of a red pipeline sees.
