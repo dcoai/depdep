@@ -48,3 +48,38 @@ publish-profile:
   script:
     - mix depdep.profile check
     - mix depdep.profile publish
+
+# Everything a hex publish would do, done locally, on every tag — package,
+# docs through the ex_doc escript (deps/0 stays empty), hex's own checks — so
+# the day a real publish is wanted (#73) nothing is being tried for the first
+# time. `--dry-run` still insists on a key; the placeholder is never sent
+# anywhere, and if hex ever did send it the 401 would be the right failure.
+# MIX_ENV=prod, not the pipeline's test: under test the beams include
+# test/support and the docs would document the fixtures.
+hex-dry-run:
+  stage: publish
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v/
+  variables:
+    MIX_ENV: prod
+    HEX_API_KEY: dry-run
+  script:
+    - mix escript.install hex ex_doc --force
+    - mix hex.publish --dry-run --yes
+  artifacts:
+    paths: [doc/]
+    expire_in: 1 week
+
+# The real thing, and it does not exist until somebody sets HEX_API_KEY
+# (protected, masked) — the publish is a later decision (#73), so until then
+# a tag pipeline has no job that could fail for want of a key. Hex refuses a
+# version it already has, so a tag whose @version did not move (#40) stops here.
+publish-hex:
+  stage: publish
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v/ && $HEX_API_KEY
+  variables:
+    MIX_ENV: prod
+  script:
+    - mix escript.install hex ex_doc --force
+    - mix hex.publish --yes
