@@ -19,7 +19,8 @@ defmodule Depdep.MixProject do
       description: description(),
       source_url: @source_url,
       package: package(),
-      docs: [main: "readme", extras: ["README.md"]]
+      aliases: [docs: &docs/1],
+      docs: [main: "readme", extras: ["README.md", "CHANGELOG.md"]]
     ]
   end
 
@@ -54,6 +55,43 @@ defmodule Depdep.MixProject do
       links: %{"Source" => @source_url},
       files: ~w(lib priv mix.exs README.md LICENSE CHANGELOG.md .formatter.exs)
     ]
+  end
+
+  # `mix docs` without ex_doc as a dependency. `mix hex.publish` builds docs by
+  # running the `docs` task, and hex's own help says any library or an alias
+  # will do — so this alias runs the ex_doc *escript* (`mix escript.install hex
+  # ex_doc`) over the compiled beams, and `deps/0` above stays empty. The
+  # escript has to be installed by hand, and says so when it is not.
+  defp docs(_args) do
+    Mix.Task.run("compile")
+    escript = Path.join(Mix.path_for(:escripts), "ex_doc")
+
+    File.exists?(escript) ||
+      Mix.raise(
+        "mix docs: #{escript} is not installed — run: mix escript.install hex ex_doc --force"
+      )
+
+    config = Path.join(Mix.Project.build_path(), "docs.exs")
+    File.write!(config, inspect(project()[:docs], limit: :infinity))
+
+    args = [
+      "Depdep",
+      @version,
+      Mix.Project.compile_path(),
+      "--config",
+      config,
+      "--package",
+      "depdep",
+      "--source-url",
+      @source_url,
+      "--source-ref",
+      "v#{@version}"
+    ]
+
+    case System.cmd(escript, args, into: IO.stream()) do
+      {_, 0} -> :ok
+      {_, status} -> Mix.raise("mix docs: ex_doc exited with status #{status}")
+    end
   end
 
   defp description do

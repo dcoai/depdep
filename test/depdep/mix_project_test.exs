@@ -3,10 +3,10 @@ defmodule Depdep.MixProjectTest do
   # only checks that the fields it needs exist. What they say is decided here.
   use ExUnit.Case, async: true
 
-  @project Depdep.MixProject.project()
+  defp project, do: Depdep.MixProject.project()
 
   test "the package is MIT, links its source, and lists its files explicitly" do
-    package = @project[:package]
+    package = project()[:package]
     assert package[:licenses] == ["MIT"]
     assert %{"Source" => "https://" <> _} = package[:links]
 
@@ -15,11 +15,34 @@ defmodule Depdep.MixProjectTest do
   end
 
   test "every listed file exists, and the license and changelog are what they claim" do
-    for file <- @project[:package][:files],
+    for file <- project()[:package][:files],
         do: assert(File.exists?(file), "#{file} is listed but absent")
 
     assert File.read!("LICENSE") =~ "MIT License"
-    assert File.read!("CHANGELOG.md") =~ "## v#{@project[:version]} —"
+    assert File.read!("CHANGELOG.md") =~ "## v#{project()[:version]} —"
+  end
+
+  # `mix hex.publish` builds docs by running the `docs` task. With no ex_doc
+  # dependency allowed, that task is an alias over the escript — and the
+  # README is its front page, the changelog beside it (#77).
+  test "docs are an alias, with the README as the main page" do
+    assert is_function(project()[:aliases][:docs], 1)
+    assert project()[:docs][:main] == "readme"
+    assert project()[:docs][:extras] == ["README.md", "CHANGELOG.md"]
+  end
+
+  # The escript is installed by hand, so its absence is the likeliest way
+  # `mix docs` fails on a fresh machine; the failure has to say what to run.
+  @tag :integration
+  test "mix docs without the escript names the install command" do
+    home = Path.join(System.tmp_dir!(), "depdep-mixhome-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(home)
+    on_exit(fn -> File.rm_rf!(home) end)
+
+    assert {output, 1} =
+             System.cmd("mix", ["docs"], env: [{"MIX_HOME", home}], stderr_to_stdout: true)
+
+    assert output =~ "run: mix escript.install hex ex_doc --force"
   end
 
   # The README is the package's front page on hexdocs. A reader there has no
@@ -37,7 +60,7 @@ defmodule Depdep.MixProjectTest do
   # Depdep runs before `mix deps.get`; a dependency would have to be fetched by
   # the machinery it exists to get in front of (README, "Why no dependencies").
   test "there are no dependencies" do
-    assert @project[:deps] == []
+    assert project()[:deps] == []
   end
 
   # The tarball is the package: build it and read back what it holds, so a
