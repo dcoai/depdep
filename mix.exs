@@ -18,6 +18,7 @@ defmodule Depdep.MixProject do
       name: "Depdep",
       description: description(),
       source_url: @source_url,
+      package: package(),
       docs: [main: "readme", extras: ["README.md"]]
     ]
   end
@@ -42,6 +43,18 @@ defmodule Depdep.MixProject do
   # get in front of. Signature v4 is about sixty lines; `:httpc` and `:erl_tar`
   # ship with OTP. See README, "Why no dependencies".
   defp deps, do: []
+
+  # What a hex package of depdep carries, listed rather than defaulted so the set
+  # is a decision: `priv/` because the metresis profile lives there and a task
+  # reads it at runtime (#74); no `test/`, no CI config. `links` reads the one
+  # `@source_url` so pointing it at a public mirror is a one-line change (#73).
+  defp package do
+    [
+      licenses: ["MIT"],
+      links: %{"Source" => @source_url},
+      files: ~w(lib priv mix.exs README.md LICENSE CHANGELOG.md .formatter.exs)
+    ]
+  end
 
   defp description do
     "Content-addressed store for build artifacts: compiled Elixir dependencies, " <>
