@@ -4,8 +4,23 @@ What changed for a user of depdep, per release. Each version is a git tag;
 the four earliest also carry GitLab release notes, from which these entries
 are condensed. Issue numbers are dco-tek/depdep's.
 
-## Unreleased
+## v0.5.0 — 2026-09-20
 
+A publishable package, and the leaf-git fix consumers are waiting on. Two new
+Mix tasks make this a minor; nothing about a consumer's bootstrap script or CI
+line changes but the tag.
+
+- **`--compile-deps` names only misses this env is known to build.** A miss
+  the env walk could only call ambiguous — possible when the dependency graph
+  could not be read — is warned once and left to the consumer's `mix compile`
+  rather than handed to `mix deps.compile`, which refuses it for the env and
+  ended the run. (#83, from extc's #81)
+- **Docs and a rehearsed publish.** `mix docs` builds through the ex_doc
+  escript so `deps/0` stays `[]`; every `v*` tag runs `hex-dry-run`, the whole
+  publish path against a placeholder key. A `publish-hex` job exists but does
+  not run until `HEX_API_KEY` is set — publishing is a separate decision. (#77)
+- **README for a reader outside the private network.** Getting started leads
+  with the hex form; Status says what is measured and what is not. (#76)
 - **The metresis profile ships in `priv/`** and `Depdep.Profile` finds it
   through `:code.priv_dir/1` at runtime instead of a path into the source
   tree, so a copy installed from a package can run `mix depdep.profile
