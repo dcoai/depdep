@@ -228,9 +228,9 @@ Depdep.CLI.main(System.argv())
 `Mix.install/2` fetches into its own cache, independent of your project's
 `deps/`, so there is no ordering problem and no root Mix project required.
 
-**Until depdep is on hex.pm — and as of this version it is not; v0.5.0 will be
-the first release published there — install it from git instead.** The git
-form also stays the way to run a commit that has no release yet:
+**Until depdep is on hex.pm — and as of v0.5.0 it is not; publishing is a
+separate decision from tagging — install it from git instead.** The git form
+also stays the way to run a commit that has no release yet:
 
 ```elixir
 # A private repository's URL has to carry credentials, and what is available
@@ -242,7 +242,7 @@ url =
     token -> "https://gitlab-ci-token:#{token}@gitlab.example.com/group/depdep.git"
   end
 
-Mix.install([{:depdep, git: url, tag: "v0.4.0"}])
+Mix.install([{:depdep, git: url, tag: "v0.5.0"}])
 
 Depdep.CLI.main(System.argv())
 ```
@@ -776,6 +776,6 @@ below is tested; the pipeline-level confirmation is what is missing.
   the S3 verbs are exercised over a socket, but no `--report` or `--sweep` has
   seen a live store.
 
-**Not on hex.pm yet.** The package builds (`mix hex.build`) and carries its
-license, but v0.5.0 will be the first version published; until then install it
-from git as [Getting started](#3-add-the-bootstrap-script) shows.
+**Not on hex.pm yet.** The package builds (`mix hex.build`) and every tag
+rehearses a publish, but no version has been published; until one is, install
+it from git as [Getting started](#3-add-the-bootstrap-script) shows.
