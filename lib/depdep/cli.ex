@@ -337,15 +337,20 @@ defmodule Depdep.CLI do
   defp compile_without_store(opts) do
     {:ok, units, warnings} = Depdep.Provider.Mix.enumerate(opts)
     Enum.each(warnings, &warn/1)
+    env = Keyword.fetch!(opts, :env)
 
-    absent =
-      Enum.filter(units, fn unit ->
+    # The same rule as `compile_deps/3`: a unit the env walk could only call
+    # ambiguous is held, not named to Mix (#80).
+    {absent, held} =
+      Depdep.Compile.select(units, fn unit ->
         not match?({:not_for_env, _}, unit.resolution) and
           not Depdep.Provider.Mix.present?(unit)
       end)
 
+    Enum.each(held, &warn(Depdep.Compile.held_warning(&1, env)))
+
     {us, {status, measured, _unmeasured}} =
-      :timer.tc(fn -> Depdep.Compile.run(absent, Keyword.fetch!(opts, :env)) end)
+      :timer.tc(fn -> Depdep.Compile.run(absent, env) end)
 
     IO.puts("depdep: compiled #{map_size(measured)} in " <> Report.duration(us))
     if status != 0, do: System.halt(status)
@@ -380,12 +385,7 @@ defmodule Depdep.CLI do
 
     {to_compile, held} = Depdep.Compile.select(mix_units, missing)
 
-    Enum.each(held, fn unit ->
-      warn(
-        "#{Unit.label(unit)}: not compiled — may be outside MIX_ENV=#{env}, " <>
-          "the dependency graph was not available"
-      )
-    end)
+    Enum.each(held, &warn(Depdep.Compile.held_warning(&1, env)))
 
     {us, {status, measured, unmeasured}} =
       :timer.tc(fn -> Depdep.Compile.run(to_compile, env) end)
