@@ -24,6 +24,21 @@ defmodule Depdep.CompileTest do
                Compile.select(units, ["app/jason", "app/earmark_parser"])
     end
 
+    # The no-store path has no pull to say what is missing; it asks a predicate.
+    test "given a predicate, the same split: absent active compiled, absent ambiguous held" do
+      units = [unit("jason", :active), unit("earmark_parser", :ambiguous), unit("spark", :active)]
+      absent? = &(&1.name != "spark")
+
+      assert {[%Unit{name: "jason"}], [%Unit{name: "earmark_parser"}]} =
+               Compile.select(units, absent?)
+    end
+
+    test "the held line names the unit and the env, and is the same on both paths" do
+      assert Compile.held_warning(unit("earmark_parser", :ambiguous), :test) ==
+               "app/earmark_parser: not compiled — may be outside MIX_ENV=test, " <>
+                 "the dependency graph was not available"
+    end
+
     test "nothing missing, nothing compiled, nothing held" do
       assert Compile.select([unit("jason", :active)], []) == {[], []}
     end
