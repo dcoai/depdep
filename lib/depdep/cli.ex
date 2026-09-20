@@ -364,21 +364,31 @@ defmodule Depdep.CLI do
   defp compiled_clause(nil), do: ""
   defp compiled_clause({n, us}), do: " — compiled #{n} in " <> Report.duration(us)
 
-  # Exactly the misses, named to one `mix deps.compile` per member. Mix orders
-  # them; depdep times them from the boundaries Mix prints. A restored unit is
-  # never mentioned, so Mix never looks at it (#59).
+  # Exactly the misses this env is known to build, named to one
+  # `mix deps.compile` per member. Mix orders them; depdep times them from the
+  # boundaries Mix prints. A restored unit is never mentioned, so Mix never
+  # looks at it (#59); a miss whose env verdict is still ambiguous is never
+  # mentioned either, since Mix would refuse it for this env (#81).
   defp compile_deps(phases, mix_units, opts) do
     {mix_phases, others} = Enum.split_with(phases, &(&1.provider == "mix"))
+    env = Keyword.fetch!(opts, :env)
 
     missing =
       for phase <- mix_phases,
           %Metrics.Unit{bucket: :missing, label: label} <- phase.units,
           do: label
 
-    to_compile = Enum.filter(mix_units, &(Unit.label(&1) in missing))
+    {to_compile, held} = Depdep.Compile.select(mix_units, missing)
+
+    Enum.each(held, fn unit ->
+      warn(
+        "#{Unit.label(unit)}: not compiled — may be outside MIX_ENV=#{env}, " <>
+          "the dependency graph was not available"
+      )
+    end)
 
     {us, {status, measured, unmeasured}} =
-      :timer.tc(fn -> Depdep.Compile.run(to_compile, Keyword.fetch!(opts, :env)) end)
+      :timer.tc(fn -> Depdep.Compile.run(to_compile, env) end)
 
     Enum.each(unmeasured, fn label ->
       warn("#{label}: compiled, but Mix printed no boundary for it — no compile time recorded")

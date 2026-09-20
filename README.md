@@ -301,7 +301,10 @@ as it is, and each dependency's compile time is read off the boundaries Mix
 already prints — `==> jason` to `Generated jason app` — so there is no
 `MIX_DEBUG` noise and nothing to parse in your pipeline. rebar3 dependencies
 print no end marker, so theirs runs to the next boundary and is labelled as
-such. The number is written beside the build (`_build/<env>/.depdep/<name>.compile`)
+such. Only a miss the env walk settled as active is named: one it could only
+call "maybe outside this env" — possible when the dependency graph could not be
+read — is left to your `mix compile` and said so, since Mix would refuse it
+for the env. The number is written beside the build (`_build/<env>/.depdep/<name>.compile`)
 for `--push` to carry with the object, and posted as `depdep.compile`.
 
 This is the one place depdep may fail a job: a dependency that does not compile

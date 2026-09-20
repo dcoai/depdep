@@ -23,6 +23,16 @@ defmodule Depdep.Compile do
   would have been, with the same error text. The store had nothing to do with
   it.
 
+  ## Only what this env is known to build
+
+  A miss is named to Mix only when the env walk said `:active` exactly. A unit
+  still `:ambiguous` after the second pass — the graph could not be read, so a
+  git dependency's children are unknown and an unreached entry *might* be one
+  of them — was rightly requested from the store, but naming it to
+  `mix deps.compile` under an env that does not build it is refused
+  (`Unknown dependency X for environment Y`) and ends the run for nothing
+  (#81). It is left to the consumer's own `mix compile`, and said so.
+
   ## What is recorded, and where
 
   Each measured unit's microseconds go to `<build_path>/.depdep/<name>.compile`,
@@ -32,6 +42,16 @@ defmodule Depdep.Compile do
   """
 
   alias Depdep.Unit
+
+  @doc """
+  Which of `units` to compile, given the labels the pull left `:missing`:
+  `{to_compile, held}`. `held` are misses whose env verdict is not exact.
+  """
+  def select(units, missing_labels) do
+    units
+    |> Enum.filter(&(Unit.label(&1) in missing_labels))
+    |> Enum.split_with(&(&1.context.env_verdict == :active))
+  end
 
   @doc """
   Compiles `units` (misses of the mix provider, any members), returning
