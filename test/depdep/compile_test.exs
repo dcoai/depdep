@@ -3,6 +3,32 @@ defmodule Depdep.CompileTest do
 
   alias Depdep.{Compile, Unit}
 
+  # extc's failure (#81): a miss the env walk could only call ambiguous was
+  # named to `mix deps.compile`, which refused it for the env and ended the run.
+  describe "select/2 — only misses this env is known to build" do
+    defp unit(name, verdict) do
+      %Unit{
+        group: "app",
+        name: name,
+        resolution: {:key, "abc"},
+        object: nil,
+        detail: "-",
+        context: %{project_dir: "/app", name: name, env: :test, env_verdict: verdict}
+      }
+    end
+
+    test "an active miss is compiled, an ambiguous one is held, a hit is not mentioned" do
+      units = [unit("jason", :active), unit("earmark_parser", :ambiguous), unit("spark", :active)]
+
+      assert {[%Unit{name: "jason"}], [%Unit{name: "earmark_parser"}]} =
+               Compile.select(units, ["app/jason", "app/earmark_parser"])
+    end
+
+    test "nothing missing, nothing compiled, nothing held" do
+      assert Compile.select([unit("jason", :active)], []) == {[], []}
+    end
+  end
+
   describe "saved_us/2 — a conservative lower bound" do
     test "the compile not done, less what the transfer cost" do
       assert Compile.saved_us(2_500_000, 400_000) == 2_100_000

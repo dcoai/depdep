@@ -70,7 +70,8 @@ defmodule Depdep.Provider.Mix do
     |> Enum.sort()
     |> Enum.map(fn {name, keyed} ->
       entry = Map.fetch!(lock, name)
-      resolution = resolve(keyed, Map.fetch!(verdicts, name), env)
+      verdict = Map.fetch!(verdicts, name)
+      resolution = resolve(keyed, verdict, env)
 
       %Unit{
         group: project,
@@ -82,6 +83,9 @@ defmodule Depdep.Provider.Mix do
           project_dir: project_dir,
           name: name,
           env: env,
+          # Kept past resolution: an `:ambiguous` unit is requested like an
+          # active one, but `--compile-deps` must not name it to Mix (#81).
+          env_verdict: verdict,
           direction: direction,
           build_path: build_path
         }
