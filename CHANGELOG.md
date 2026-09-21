@@ -4,7 +4,12 @@ What changed for a user of depdep, per release. Each version is a git tag;
 the four earliest also carry GitLab release notes, from which these entries
 are condensed. Issue numbers are dco-tek/depdep's.
 
-## Unreleased
+## v0.6.0 — 2026-09-21
+
+The consumer-found defects of v0.5.0, and one URL for the store. A minor:
+`DEPDEP_STORE` and `DEPDEP_METRESIS` add to the interface; a consumer's
+bootstrap script and CI line change only in the tag, and every object path
+is unchanged — no store refill.
 
 - **`DEPDEP_STORE`**: one URL for the shape of the store —
   `s3://ACCESS_KEY@host:port/bucket?region=…` (`s3+https` for TLS) — beside
