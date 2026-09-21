@@ -37,7 +37,9 @@ defmodule Depdep.Key do
 
       key(dep) = sha256(
         schema_version,                       # retires the whole store
-        elixir, otp, mix_env,                 # the toolchain
+        elixir, otp, erts, arch, mix_env,     # the toolchain
+        ERL_COMPILER_OPTIONS, ELIXIR_ERL_OPTIONS, MIX_TARGET,
+        [os_release, cc]                      # only for a dependency with a native build
         name, version, inner_checksum,        # the dep's own source (the lock entry)
         build_tools,                          # mix / rebar3 / make, from the lock
         env, compile, system_env,             # the declaration's build options (Mix's)
@@ -56,6 +58,18 @@ defmodule Depdep.Key do
   Because each node contributes its own app's config and folds in its children,
   a dependency's closure accumulates config for exactly the apps in that closure
   and no others.
+
+  ## What an object carries that is not a key input
+
+  Two things travel inside an object and are deliberately not hashed. Mix's
+  Erlang compiler manifest (`.mix/compile.erlang`) records the **pusher's
+  absolute beam paths**; it is read only when Mix decides to recompile the
+  dependency, and then it makes Mix recompile the `.erl` files it lists —
+  a few files, once, never a wrong build. Mix's Elixir manifest records
+  relative source paths and the directory it was compiled in, which it
+  checks only when compiling. Neither changes what a restored dependency
+  *is*, so neither is in the key; `Depdep.RestoreCheck` is what notices when
+  Mix would rebuild a restored unit for any reason.
 
   A dependency resolves to `{:key, hash}` or `{:skip, reason}`. `:skip`
   propagates upward: a dependency whose child cannot be keyed cannot itself be
@@ -81,13 +95,74 @@ defmodule Depdep.Key do
   def digest(parts),
     do: :crypto.hash(:sha256, Enum.join(parts, "\n")) |> Base.encode16(case: :lower)
 
-  @doc "The toolchain half of every key. Separated so tests can hold it fixed."
+  @doc """
+  The toolchain half of every key: `%{base: parts, native: parts}`.
+
+  `base` is in every key: the Elixir and OTP the bytecode was produced by,
+  the ERTS and the architecture a beam or a NIF is loaded into, the
+  `MIX_ENV`, and the three environment variables that change what the
+  compilers emit (`ERL_COMPILER_OPTIONS`, `ELIXIR_ERL_OPTIONS`, `MIX_TARGET`
+  — empty when unset, so unset is one value). Before v3 only the first two
+  and the env were here, and every NIF object in the store was x86-64 bytes
+  with nothing in its key to say so (#89).
+
+  `native` is folded in only for a dependency with a native build
+  (`native?/1`): the OS release and the C compiler, which are what its bytes
+  additionally depend on. A dependency without one does not rekey when the
+  image's `gcc` moves. Separated so tests can hold both fixed.
+  """
   def toolchain(env) do
-    [
-      "elixir=#{System.version()}",
-      "otp=#{:erlang.system_info(:otp_release)}",
-      "env=#{env}"
-    ]
+    %{
+      base: [
+        "elixir=#{System.version()}",
+        "otp=#{:erlang.system_info(:otp_release)}",
+        "erts=#{:erlang.system_info(:version)}",
+        "arch=#{:erlang.system_info(:system_architecture)}",
+        "env=#{env}",
+        "erl_compiler_options=#{System.get_env("ERL_COMPILER_OPTIONS") || ""}",
+        "elixir_erl_options=#{System.get_env("ELIXIR_ERL_OPTIONS") || ""}",
+        "mix_target=#{System.get_env("MIX_TARGET") || ""}"
+      ],
+      native: [
+        "os=#{Depdep.Provider.Apt.suite()}",
+        "cc=#{cc_version()}"
+      ]
+    }
+  end
+
+  # The first line of `cc --version`, or `none`: a machine with no C compiler
+  # cannot have built a NIF, and one that gains a compiler later must not
+  # match objects built without one.
+  defp cc_version do
+    case System.find_executable("cc") do
+      nil ->
+        "none"
+
+      cc ->
+        case System.cmd(cc, ["--version"], stderr_to_stdout: true) do
+          {out, 0} -> out |> String.split("\n", parts: 2) |> hd() |> String.trim()
+          {_, _} -> "unknown"
+        end
+    end
+  end
+
+  @native_tools ~w(elixir_make rustler rustler_precompiled zigler zigler_precompiled cc_precompiler)
+
+  @doc """
+  Whether a dependency's build produces native code, from its lock entry
+  alone — fetched or not.
+
+  A NIF or port program is built by a tool the dependency declares:
+  `elixir_make`, `rustler` (or `rustler_precompiled`, which downloads a
+  build for this target — native bytes all the same), `zigler`,
+  `cc_precompiler`; or the dependency is `make`-managed. Those names are in
+  the lock entry's child list, which is why this needs no source on disk.
+  """
+  def native?(%{entry: entry, children: children}) do
+    tools = if children == :unknown, do: [], else: Enum.map(children, &elem(&1, 0))
+
+    Enum.any?(tools, &(&1 in @native_tools)) or
+      (Depdep.Lock.hex?(entry) and :make in elem(entry, 4))
   end
 
   @doc """
@@ -180,7 +255,8 @@ defmodule Depdep.Key do
 
         parts =
           [@schema] ++
-            toolchain ++
+            toolchain.base ++
+            if(native?(dep), do: toolchain.native, else: []) ++
             [
               "name=#{name}",
               "version=#{Depdep.Lock.version(entry)}",

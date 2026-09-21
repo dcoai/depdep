@@ -4,13 +4,13 @@ What changed for a user of depdep, per release. Each version is a git tag;
 the four earliest also carry GitLab release notes, from which these entries
 are condensed. Issue numbers are dco-tek/depdep's.
 
-## v0.6.0 — 2026-09-21
+## Unreleased
 
-The consumer-found defects of v0.5.0, and one URL for the store. A minor:
-`DEPDEP_STORE` and `DEPDEP_METRESIS` add to the interface; a consumer's
-bootstrap script and CI line change only in the tag, and every object path
-is unchanged — no store refill.
-
+- **The toolchain fingerprint is complete.** Every key carries the ERTS, the
+  architecture and the compiler environment (`ERL_COMPILER_OPTIONS`,
+  `ELIXIR_ERL_OPTIONS`, `MIX_TARGET`); a dependency with a native build
+  additionally keys on the OS release and the C compiler. No NIF object is
+  x86-64 bytes with nothing in its key to say so any more. (#95)
 - **Schema v3: the key's inputs are Mix's own.** Children, the env rule and
   the build options a declaration carries (`env:`, `compile:`, `system_env:`
   — none of which was in the key before) come from the converge `mix deps`
@@ -21,6 +21,14 @@ is unchanged — no store refill.
   and `--mix-get`'s second pass settles it. **Every object path changes: a
   consumer's first pipeline on this version refills the store, the second is
   warm; v2 objects are left for `--sweep`.** (#94, from #89)
+
+## v0.6.0 — 2026-09-21
+
+The consumer-found defects of v0.5.0, and one URL for the store. A minor:
+`DEPDEP_STORE` and `DEPDEP_METRESIS` add to the interface; a consumer's
+bootstrap script and CI line change only in the tag, and every object path
+is unchanged — no store refill.
+
 - **`DEPDEP_STORE`**: one URL for the shape of the store —
   `s3://ACCESS_KEY@host:port/bucket?region=…` (`s3+https` for TLS) — beside
   `DEPDEP_SECRET_KEY`, which stays its own variable; a URL carrying a
