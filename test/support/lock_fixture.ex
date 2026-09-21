@@ -29,8 +29,37 @@ defmodule Depdep.LockFixture do
   def toolchain, do: ["elixir=1.20.4", "otp=29", "env=test"]
 
   def keys(lock, config \\ %{}) do
-    {:ok, keys} = Depdep.Key.compute(Map.new(lock), config, toolchain())
+    {:ok, keys} = Depdep.Key.compute(Depdep.Deps.from_lock(Map.new(lock)), config, toolchain())
     keys
+  end
+
+  @doc """
+  Keys with Mix's view supplied: `mix` is `%{name => children}` for the git
+  dependencies Mix has fetched (children as `[{name, optional?}]`), or a full
+  `%{complete?:, deps:}` view. Every named dependency has the default build
+  options unless `opts` says otherwise.
+  """
+  def keys_with_mix(lock, mix, config \\ %{}) do
+    view =
+      case mix do
+        %{complete?: _, deps: _} -> mix
+        children -> %{complete?: true, deps: Map.new(children, fn {n, c} -> {n, dep_info(c)} end)}
+      end
+
+    {:ok, keys} =
+      Depdep.Key.compute(Depdep.Deps.from_lock(Map.new(lock), view), config, toolchain())
+
+    keys
+  end
+
+  @doc "Mix's view of one dependency, as `Depdep.Deps.mix_view/2` would give it."
+  def dep_info(children, opts \\ []) do
+    %{
+      children: children,
+      env: Keyword.get(opts, :env, :prod),
+      compile: Keyword.get(opts, :compile),
+      system_env: Keyword.get(opts, :system_env, [])
+    }
   end
 
   @doc "The hash for one name, or `{:skip, reason}`."

@@ -41,64 +41,21 @@ defmodule Depdep do
   """
 
   @doc """
-  Project -> `{:ok, keys, lock, verdicts, unlocked}` or `{:error, reason}`.
+  Project -> `{:ok, keys, deps}` or `{:error, reason}`.
 
-  `unlocked` names the declared dependencies the env walk could not start
-  from — path dependencies, whose closure is not in the lock (#79) — so the
-  provider can say why the verdicts are ambiguous.
-
-  `keys` is `%{name => {:key, hash} | {:skip, reason}}` for every entry in the
-  lock, exactly as before. `verdicts` is `Depdep.EnvSet.classify/3`'s answer for
-  the same names — whether this `env` builds the entry at all — computed here
-  because it needs the graph this function already asked Mix for, and asking
-  twice would run `mix deps.tree` twice per member.
+  `deps` is `Depdep.Deps.read/2`'s answer — the lock with what Mix adds — and
+  `keys` is `%{name => {:key, hash} | {:skip, reason}}` for every entry in it.
   """
   def keys_for(root, project, env) do
     project_dir = Path.join(root, project)
 
-    with {:ok, lock} <- Depdep.Lock.read(Path.join(project_dir, "mix.lock")),
+    with {:ok, deps} <- Depdep.Deps.read(project_dir, env),
          config = Depdep.Config.read(project_dir, env, root),
-         graph = graph_for(project_dir, env, lock),
-         {:ok, keys} <- Depdep.Key.compute(lock, config, Depdep.Key.toolchain(env), graph) do
-      direct = Depdep.EnvSet.declared(project_dir, env)
-      verdicts = Depdep.EnvSet.classify(direct, lock, graph)
-      unlocked = if direct == :unknown, do: [], else: elem(Depdep.EnvSet.roots(direct, lock), 1)
-      {:ok, keys, lock, verdicts, unlocked}
+         {:ok, keys} <- Depdep.Key.compute(deps, config, Depdep.Key.toolchain(env)) do
+      {:ok, keys, deps}
     else
       {:error, {:cycle, name}} -> {:error, "dependency cycle through #{name}"}
       {:error, reason} -> {:error, reason}
-    end
-  end
-
-  # Two guards before shelling out, and both matter.
-  #
-  # There must be a git entry at all: a lock of hex entries already carries every
-  # child, so asking Mix would be a subprocess per project to learn nothing.
-  #
-  # And every git dependency's source must already be on disk. `mix deps.tree`
-  # cannot resolve a dependency it has not fetched, so before `mix deps.get` it
-  # fails — slowly, and possibly over the network. That is the FIRST pass, every
-  # run, once per project: measured at ~28 s across this project's own test
-  # fixtures before the guard was added. Checking for `deps/<name>` costs a stat
-  # and answers the same question.
-  #
-  # Without a graph the git dependency skips exactly as it always has, and the
-  # second pass — after `deps.get` — is where this succeeds.
-  defp graph_for(project_dir, env, lock) do
-    git_deps =
-      for {name, entry} <- lock, elem(entry, 0) == :git, do: name
-
-    fetched? =
-      git_deps != [] and
-        Enum.all?(git_deps, &File.dir?(Path.join([project_dir, "deps", &1])))
-
-    if fetched? do
-      case Depdep.Graph.read(project_dir, env) do
-        {:ok, graph} -> graph
-        {:error, _reason} -> %{}
-      end
-    else
-      %{}
     end
   end
 end

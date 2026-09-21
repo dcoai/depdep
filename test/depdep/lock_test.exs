@@ -42,8 +42,10 @@ defmodule Depdep.LockTest do
     assert {:error, _} = write_and_read(":not_a_map\n")
   end
 
-  test "a git entry reports its children as unknown" do
-    {_name, entry} = git("heroicons")
-    assert Depdep.Lock.children(entry) == :unknown
+  # A git entry carries url, ref and opts and no dependency list; its children
+  # are Mix's once fetched (`Depdep.Deps`), unknown until then.
+  test "a git entry's children are unknown until Mix has fetched it" do
+    deps = Depdep.Deps.from_lock(Map.new([git("heroicons")]))
+    assert deps["heroicons"].children == :unknown
   end
 end

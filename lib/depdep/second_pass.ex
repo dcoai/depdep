@@ -4,12 +4,12 @@ defmodule Depdep.SecondPass do
 
   The first pass runs before any source is on disk, and two things are
   undecidable then. A git dependency cannot be keyed — its lock entry carries
-  no child list — so it and its dependents are `skipped`. And a lock entry the
-  env walk did not reach may be one of those unknown children, so
-  `Depdep.EnvSet` calls it ambiguous and the pass requests it anyway, which
-  can only end in `missing` if it was outside the env all along.
+  no child list and Mix has not read its `mix.exs` — so it and its dependents
+  are `skipped`. And Mix's list of what this env builds is incomplete, so
+  nothing is called inactive: every lock entry is requested, which can only
+  end in `missing` for one that was outside the env all along.
 
-  With the source fetched, `Depdep.Graph` can read Mix's resolution and both
+  With the source fetched, Mix's list is complete (`Depdep.Deps`) and both
   questions have exact answers. This module decides, unit by unit, whether the
   second enumeration changes anything: a unit the first pass skipped is
   transferred now; a first-pass miss the second pass proves outside the env is

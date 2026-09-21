@@ -45,7 +45,9 @@ defmodule Depdep.Provider.MixTest do
 
   # #79, the consumer shape: `{:sibling, path: "../sibling"}` declared in a
   # real mix.exs, `sibling` having locked a hex package the member does not
-  # declare. Through `keys_for/3` and `enumerate/1`, as a run would.
+  # declare. Under #89 the path dependency is in Mix's list like anything
+  # else, with its children, so once the hex packages are fetched its closure
+  # is active — by construction, no walk.
   describe "a member with a path dependency" do
     setup ctx do
       member = Path.join(ctx.root, "member")
@@ -53,64 +55,75 @@ defmodule Depdep.Provider.MixTest do
       File.mkdir_p!(member)
       File.mkdir_p!(sibling)
 
-      File.write!(
-        Path.join(sibling, "mix.exs"),
-        "defmodule Sib#{System.unique_integer([:positive])}.MixProject do\n  use Mix.Project\n  def project, do: [app: :sibling, version: \"0.1.0\"]\nend\n"
-      )
+      File.write!(Path.join(sibling, "mix.exs"), """
+      defmodule Sib#{System.unique_integer([:positive])}.MixProject do
+        use Mix.Project
+        def project, do: [app: :sibling, version: "0.1.0", deps: [{:decimal, "~> 2.0"}]]
+      end
+      """)
 
       File.write!(Path.join(member, "mix.exs"), """
       defmodule Member#{System.unique_integer([:positive])}.MixProject do
         use Mix.Project
         def project, do: [app: :member, version: "0.1.0", deps: deps()]
-        defp deps, do: [{:jason, "~> 1.4"}, {:sibling, path: "../sibling"}]
+        defp deps, do: [{:jason, "~> 1.4"}, {:sibling, path: "../sibling"}, {:ex_doc, "~> 0.34", only: :dev}]
       end
       """)
 
-      # sibling's closure is in the member's lock (Mix resolves it there), but
-      # nothing in the member declares decimal directly.
       File.write!(Path.join(member, "mix.lock"), """
       %{
         "decimal": {:hex, :decimal, "2.1.1", "innerdec", [:mix], [], "hexpm", "outerdec"},
-        "jason": {:hex, :jason, "1.4.4", "innerjason", [:mix], [], "hexpm", "outerjason"}
+        "jason": {:hex, :jason, "1.4.4", "innerjason", [:mix], [], "hexpm", "outerjason"},
+        "ex_doc": {:hex, :ex_doc, "0.34.0", "innerexdoc", [:mix], [], "hexpm", "outerexdoc"}
       }
       """)
+
+      for name <- ~w(jason decimal ex_doc) do
+        File.mkdir_p!(Path.join([member, "deps", name]))
+
+        File.write!(Path.join([member, "deps", name, "mix.exs"]), """
+        defmodule Fetched#{name}#{System.unique_integer([:positive])}.MixProject do
+          use Mix.Project
+          def project, do: [app: :#{name}, version: "1.0.0"]
+        end
+        """)
+      end
 
       :ok
     end
 
-    test "the closure is ambiguous and requested, and the warning names the path dependency",
+    test "the path dependency's closure is active and keyed; the dev-only dependency is not",
          ctx do
-      {:ok, keys, _lock, verdicts, unlocked} = Depdep.keys_for(ctx.root, "member", :test)
+      {:ok, keys, deps} = Depdep.keys_for(ctx.root, "member", :test)
 
-      assert unlocked == ["sibling"]
-      assert verdicts["jason"] == :active
-      assert verdicts["decimal"] == :ambiguous
+      assert deps["decimal"].active? == true
+      assert deps["jason"].active? == true
+      assert deps["ex_doc"].active? == false
+      refute Map.has_key?(deps, "sibling")
       assert {:key, _} = keys["decimal"]
 
       {:ok, units, warnings} =
         Provider.Mix.enumerate(root: ctx.root, env: :test, project: "member")
 
-      assert Enum.find(units, &(&1.name == "decimal")).resolution |> elem(0) == :key
-
-      assert warnings == [
-               "member: 1 dependencies may be outside MIX_ENV=test but are requested " <>
-                 "anyway — sibling is a path dependency whose closure is not in the lock"
-             ]
+      by_name = Map.new(units, &{&1.name, &1})
+      assert {:key, _} = by_name["decimal"].resolution
+      assert by_name["ex_doc"].resolution == {:not_for_env, :test}
+      assert warnings == []
     end
   end
 
   describe "enumerate/1 produces exactly what the pre-seam path produced" do
     test "every object path matches Depdep.Key.object/3 computed directly", ctx do
-      {:ok, keys, lock, _verdicts, _unlocked} = Depdep.keys_for(ctx.root, "app", :test)
+      {:ok, keys, deps} = Depdep.keys_for(ctx.root, "app", :test)
 
       for {name, {:key, hash}} <- keys do
-        expected = Depdep.Key.object(name, Map.fetch!(lock, name), hash)
+        expected = Depdep.Key.object(name, deps[name].entry, hash)
         assert ctx.by_name[name].object == expected
       end
     end
 
     test "the keys themselves are unchanged", ctx do
-      {:ok, keys, _lock, _verdicts, _unlocked} = Depdep.keys_for(ctx.root, "app", :test)
+      {:ok, keys, _deps} = Depdep.keys_for(ctx.root, "app", :test)
 
       for {name, resolution} <- keys do
         assert ctx.by_name[name].resolution == resolution
@@ -189,12 +202,29 @@ defmodule Depdep.Provider.MixTest do
       }
       """)
 
-      :ok
+      %{dir: dir}
     end
 
-    test "the dev-only chain is not_for_env under test, with no object and no detail", %{
-      root: root
-    } do
+    # What `mix deps.get` leaves that Mix reads: a `mix.exs` per dependency.
+    # With one, Mix calls the dependency available and lists its children.
+    defp fetched(dir, names) do
+      for name <- names do
+        File.mkdir_p!(Path.join([dir, "deps", name]))
+
+        File.write!(Path.join([dir, "deps", name, "mix.exs"]), """
+        defmodule Fetched#{name}#{System.unique_integer([:positive])}.MixProject do
+          use Mix.Project
+          def project, do: [app: :#{name}, version: "1.0.0"]
+        end
+        """)
+      end
+    end
+
+    # After deps.get Mix's list is complete, and a lock entry not in it is
+    # outside the env — by Mix's own `only:` rule, not a walk of the lock (#89).
+    test "the dev-only chain is not_for_env under test once fetched, with no object and no detail",
+         %{root: root, dir: dir} do
+      fetched(dir, ~w(jason ex_doc makeup))
       {:ok, units, warnings} = Provider.Mix.enumerate(root: root, env: :test, project: "envapp")
       by_name = Map.new(units, &{&1.name, &1})
 
@@ -207,19 +237,32 @@ defmodule Depdep.Provider.MixTest do
       refute Provider.Mix.present?(by_name["ex_doc"])
     end
 
-    test "the same chain is keyed under dev", %{root: root} do
+    test "the same chain is keyed under dev", %{root: root, dir: dir} do
+      fetched(dir, ~w(jason ex_doc makeup))
+      {:ok, units, _} = Provider.Mix.enumerate(root: root, env: :test, project: "envapp")
+      assert Enum.any?(units, &match?({:not_for_env, _}, &1.resolution))
+
       {:ok, units, _} = Provider.Mix.enumerate(root: root, env: :dev, project: "envapp")
       assert Enum.all?(units, &match?({:key, _}, &1.resolution))
     end
 
-    # Before deps.get a git dependency's children are unknown, so the walk cannot
-    # prove the chain is outside the env. It is requested as before, and the
-    # reader of `missing N` is told why part of it may never become a hit.
-    test "a git dependency with unknown children keeps the rest requested, with one warning", %{
-      root: root
-    } do
-      dir = Path.join(root, "envapp")
+    # Before deps.get Mix's list is incomplete — a hex dependency's children
+    # are read from its mix.exs, which is not there — so nothing is called
+    # inactive: everything is requested, said once, and the second pass
+    # settles it. The fail-safe direction, as before, without the walk.
+    test "before deps.get everything is requested, with one warning naming the second pass",
+         %{root: root} do
+      {:ok, units, warnings} = Provider.Mix.enumerate(root: root, env: :test, project: "envapp")
 
+      assert Enum.all?(units, &match?({:key, _}, &1.resolution))
+      assert [warning] = warnings
+      assert warning =~ "envapp: dependencies not fetched yet, so 3 lock entries are requested"
+      assert warning =~ "--mix-get settles that after deps.get"
+    end
+
+    # A git dependency not yet fetched has children Mix cannot read, so its
+    # cone stays unknown and it is skipped; nothing else changes.
+    test "an unfetched git dependency is skipped and the rest requested", %{root: root, dir: dir} do
       File.write!(Path.join(dir, "mix.exs"), """
       defmodule DepdepMixEnvFixtureGit#{System.unique_integer([:positive])}.MixProject do
         use Mix.Project
@@ -242,15 +285,17 @@ defmodule Depdep.Provider.MixTest do
       {:ok, units, warnings} = Provider.Mix.enumerate(root: root, env: :test, project: "envapp")
       by_name = Map.new(units, &{&1.name, &1})
 
+      assert {:skip, reason} = by_name["forked"].resolution
+      assert reason =~ "git"
       assert {:key, _} = by_name["ex_doc"].resolution
       assert [warning] = warnings
-      assert warning =~ "2 dependencies may be outside MIX_ENV=test"
-      assert warning =~ "before deps.get"
+      assert warning =~ "4 lock entries are requested"
     end
 
     # A unit that is never fetched must not be listed as wanted, or the sweep
     # would keep objects for it that will never exist.
-    test "a not_for_env unit contributes nothing to the root", %{root: root} do
+    test "a not_for_env unit contributes nothing to the root", %{root: root, dir: dir} do
+      fetched(dir, ~w(jason ex_doc makeup))
       {:ok, units, _} = Provider.Mix.enumerate(root: root, env: :test, project: "envapp")
       paths = units |> Enum.map(& &1.object) |> Enum.reject(&is_nil/1)
       assert length(paths) == 1

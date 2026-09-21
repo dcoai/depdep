@@ -100,7 +100,8 @@ defmodule Depdep.KeyTest do
 
     test "a cycle is reported rather than looping forever" do
       lock = Map.new([hex("a", "1.0.0", ["b"]), hex("b", "1.0.0", ["a"])])
-      assert {:error, {:cycle, _}} = Depdep.Key.compute(lock, %{}, toolchain())
+      deps = Depdep.Deps.from_lock(lock)
+      assert {:error, {:cycle, _}} = Depdep.Key.compute(deps, %{}, toolchain())
     end
   end
 
@@ -117,21 +118,22 @@ defmodule Depdep.KeyTest do
   end
 
   # A git lock entry carries url, ref and opts and no child list, so its closure
-  # was unknowable and it — and everything above it — was skipped.
-  # `Depdep.Graph` supplies the edges Mix already resolved.
-  describe "git dependencies, given Mix's resolved graph" do
-    defp keys_with_graph(lock, graph) do
-      {:ok, keys} = Depdep.Key.compute(Map.new(lock), %{}, toolchain(), graph)
-      keys
+  # was unknowable and it — and everything above it — was skipped. Once Mix
+  # has fetched it, Mix's own list of its children (`Depdep.Deps`) supplies
+  # the edges.
+  describe "git dependencies, given Mix's view" do
+    # `mix` is `%{name => children}` for what Mix has fetched.
+    defp keys_with_graph(lock, mix) do
+      keys_with_mix(lock, Map.new(mix, fn {n, c} -> {n, Enum.map(c, &{&1, false})} end))
     end
 
-    test "are skipped without a graph, exactly as before" do
+    test "are skipped before Mix has fetched them, exactly as before" do
       lock = [git("forked"), hex("spark", "2.6.0", [])]
       assert {:skip, reason} = key(lock, "forked")
       assert reason =~ "git"
     end
 
-    test "are keyed with one" do
+    test "are keyed once Mix lists their children" do
       lock = [git("forked"), hex("spark", "2.6.0", [])]
       keys = keys_with_graph(lock, %{"forked" => ["spark"]})
 
@@ -139,16 +141,13 @@ defmodule Depdep.KeyTest do
       assert is_binary(hash)
     end
 
-    # #68: a leaf the graph names is known-and-empty, and keyed; one the graph
-    # does not name is still unknown, and still skipped with the same reason.
-    test "a leaf git dependency is keyed when the graph names it, skipped when it does not" do
+    # #68/#70: a fetched leaf has children `[]` — known and empty — and is
+    # keyed; one Mix has not fetched is unknown, and skipped with the reason.
+    test "a leaf git dependency is keyed once fetched, skipped until then" do
       lock = [git("forked"), hex("spark", "2.6.0", [])]
 
-      assert {:key, _} = keys_with_graph(lock, %{"app" => ["forked"], "forked" => []})["forked"]
-
-      assert {:skip, reason} =
-               keys_with_graph(lock, %{"app" => ["spark"], "spark" => []})["forked"]
-
+      assert {:key, _} = keys_with_graph(lock, %{"forked" => []})["forked"]
+      assert {:skip, reason} = keys_with_graph(lock, %{})["forked"]
       assert reason =~ "git"
     end
 
@@ -195,6 +194,46 @@ defmodule Depdep.KeyTest do
       lock = [hex("app", "1.0.0", ["forked"]), git("forked")]
       assert {:skip, reason} = key(lock, "app")
       assert reason =~ "forked"
+    end
+  end
+
+  # v3: the declaration's build options are Mix's, and they change the bytecode
+  # the same source produces — none was in the key before (#89).
+  describe "the build options a declaration carries" do
+    defp keyed(lock, name, opts) do
+      view = %{complete?: true, deps: %{name => dep_info([], opts)}}
+      keys_with_mix(lock, view)[name]
+    end
+
+    test "env: changes the key; the default is :prod, which is also what an unlisted dependency has" do
+      lock = [hex("jason", "1.4.4", [])]
+      assert keyed(lock, "jason", []) == key(lock, "jason") |> then(&{:key, &1})
+      refute keyed(lock, "jason", env: :dev) == keyed(lock, "jason", [])
+    end
+
+    test "compile: and system_env: change the key" do
+      lock = [hex("jason", "1.4.4", [])]
+      plain = keyed(lock, "jason", [])
+      refute keyed(lock, "jason", compile: "make") == plain
+      refute keyed(lock, "jason", system_env: [{"CC", "clang"}]) == plain
+    end
+
+    test "a transitive hex dependency keys the same before and after Mix has loaded it" do
+      lock = [hex("app", "1.0.0", ["jason"]), hex("jason", "1.4.4", [])]
+      before = keys(lock)["jason"]
+
+      view = %{
+        complete?: true,
+        deps: %{"app" => dep_info([{"jason", false}]), "jason" => dep_info([])}
+      }
+
+      assert keys_with_mix(lock, view)["jason"] == before
+    end
+  end
+
+  describe "the schema" do
+    test "is v3" do
+      assert Depdep.Key.object("ash", elem(hex("ash", "3.32.3", []), 1), "h") =~ ~r"^v3/"
     end
   end
 end

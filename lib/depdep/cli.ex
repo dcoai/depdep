@@ -340,15 +340,11 @@ defmodule Depdep.CLI do
     Enum.each(warnings, &warn/1)
     env = Keyword.fetch!(opts, :env)
 
-    # The same rule as `compile_deps/3`: a unit the env walk could only call
-    # ambiguous is held, not named to Mix (#80).
-    {absent, held} =
+    absent =
       Depdep.Compile.select(units, fn unit ->
         not match?({:not_for_env, _}, unit.resolution) and
           not Depdep.Provider.Mix.present?(unit)
       end)
-
-    Enum.each(held, &warn(Depdep.Compile.held_warning(&1, env)))
 
     {us, {status, measured, _unmeasured}} =
       :timer.tc(fn -> Depdep.Compile.run(absent, env) end)
@@ -379,11 +375,10 @@ defmodule Depdep.CLI do
   defp compiled_clause(nil), do: ""
   defp compiled_clause({n, us}), do: " — compiled #{n} in " <> Report.duration(us)
 
-  # Exactly the misses this env is known to build, named to one
-  # `mix deps.compile` per member. Mix orders them; depdep times them from the
-  # boundaries Mix prints. A restored unit is never mentioned, so Mix never
-  # looks at it (#59); a miss whose env verdict is still ambiguous is never
-  # mentioned either, since Mix would refuse it for this env (#81).
+  # Exactly the misses, named to one `mix deps.compile` per member. Mix orders
+  # them; depdep times them from the boundaries Mix prints. A restored unit is
+  # never mentioned, so Mix never looks at it (#59). Every miss is one Mix's
+  # own list says this env builds (`Depdep.Deps`), so none is refused.
   defp compile_deps(phases, mix_units, opts) do
     {mix_phases, others} = Enum.split_with(phases, &(&1.provider == "mix"))
     env = Keyword.fetch!(opts, :env)
@@ -393,9 +388,7 @@ defmodule Depdep.CLI do
           %Metrics.Unit{bucket: :missing, label: label} <- phase.units,
           do: label
 
-    {to_compile, held} = Depdep.Compile.select(mix_units, missing)
-
-    Enum.each(held, &warn(Depdep.Compile.held_warning(&1, env)))
+    to_compile = Depdep.Compile.select(mix_units, missing)
 
     {us, {status, measured, unmeasured}} =
       :timer.tc(fn -> Depdep.Compile.run(to_compile, env) end)

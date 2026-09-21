@@ -4,7 +4,8 @@ defmodule Depdep.Lock do
 
   `mix.lock` is an Elixir map literal, so it is evaluated rather than parsed. Hex
   entries carry the full dependency spec INCLUDING optionality, which is what
-  makes the whole closure computable without fetching anything:
+  lets `Depdep.Deps` know a hex dependency's children before anything is
+  fetched:
 
       "ash": {:hex, :ash, "3.32.3", "<inner>", [:mix],
         [{:plug, ">= 0.0.0", [hex: :plug, repo: "hexpm", optional: true]}, ...],
@@ -22,8 +23,8 @@ defmodule Depdep.Lock do
   dependencies collapses to one key. That is a wrong-restore, and a wrong restore
   is invisible: measured in `dco-tek/bizex`, one compiled in 2.3 s and passed
   106/106 tests while `Ash.Type.File.Source` silently resolved to `Any`.
-  `children/1` already returns strings, so normalising here makes both sides of
-  every lookup agree.
+  `Depdep.Deps` keys its map by these strings, so normalising here makes both
+  sides of every lookup agree.
 
   Evaluated inside `Code.with_diagnostics/1` because the parser emits one
   unnecessary-quotes warning per package — over a hundred lines per project,
@@ -46,41 +47,6 @@ defmodule Depdep.Lock do
       {:error, "no lockfile at #{path}"}
     end
   end
-
-  @doc """
-  The children a dependency declares, as `{name, optional?}`.
-
-  Git entries carry NO dependency list — the lock records only url, ref and
-  opts — so their closure is unknowable from here and they are reported as such
-  rather than guessed at.
-  """
-  def children(entry, graph \\ %{}, name \\ nil)
-
-  def children(entry, _graph, _name) when elem(entry, 0) == :hex do
-    entry
-    |> elem(5)
-    |> Enum.map(fn {app, _requirement, opts} ->
-      {Atom.to_string(app), Keyword.get(opts, :optional, false)}
-    end)
-    |> Enum.sort()
-  end
-
-  # A git entry records url, ref and opts and no dependency list, so its closure
-  # is unknowable from here alone. `Depdep.Graph` supplies the edges Mix already
-  # resolved; without them this stays `:unknown` and the dependency is skipped,
-  # which is the fail-safe direction it has always been.
-  #
-  # Optionality is not carried, and does not need to be: an unresolved optional
-  # child has no edge, so it is absent from this list exactly as it would be
-  # absent from a hex entry's resolved set, and the key differs accordingly.
-  def children(entry, graph, name) when elem(entry, 0) == :git do
-    case Map.fetch(graph, name) do
-      {:ok, children} -> children |> Enum.map(&{&1, false}) |> Enum.sort()
-      :error -> :unknown
-    end
-  end
-
-  def children(_entry, _graph, _name), do: :unknown
 
   def hex?(entry), do: elem(entry, 0) == :hex
 

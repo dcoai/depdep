@@ -3,8 +3,9 @@ defmodule Depdep.Provider.Mix do
   Compiled Elixir dependencies: the provider depdep was originally all of.
 
   Everything specific to Mix lives behind this module — `Depdep.Key`'s recursive
-  Merkle hash, `Depdep.Lock`, `Depdep.Config`, `Depdep.Layout`'s poncho
-  discovery, and `Depdep.Archive`'s two-trees-or-it-recompiles rule. None of it
+  Merkle hash, `Depdep.Deps` (the one place Mix itself is asked), `Depdep.Lock`,
+  `Depdep.Config`, `Depdep.Layout`'s poncho discovery, and `Depdep.Archive`'s
+  two-trees-or-it-recompiles rule. None of it
   changed when the seam was extracted, and `Depdep.Provider.MixTest` asserts as
   much: a key or an object path that moves here silently retires every object in
   every consumer's store.
@@ -29,11 +30,11 @@ defmodule Depdep.Provider.Mix do
     projects
     |> Enum.reduce({[], notes}, fn project, {units, warnings} ->
       case Depdep.keys_for(root, project, env) do
-        {:ok, keys, lock, verdicts, unlocked} ->
+        {:ok, keys, deps} ->
           case Depdep.BuildPath.for_project(Path.join(root, project), env) do
             {:ok, build_path} ->
-              {units ++ units_for(root, project, env, keys, lock, verdicts, direction, build_path),
-               warnings ++ ambiguity(project, env, verdicts, unlocked)}
+              {units ++ units_for(root, project, env, keys, deps, direction, build_path),
+               warnings ++ unsettled(project, env, deps)}
 
             {:error, reason} ->
               {units, warnings ++ ["#{project}: #{reason} — skipping it"]}
@@ -46,46 +47,31 @@ defmodule Depdep.Provider.Mix do
     |> then(fn {units, warnings} -> {:ok, units, warnings} end)
   end
 
-  # A lock entry the env walk did not reach may be a child of something the
-  # walk could not see through: a git dependency's children before `deps.get`,
-  # or a path dependency's closure, which is never in the lock (#79). Those
-  # are keyed and requested as they always were — the fail-safe direction —
-  # and said once per member, naming the cause, because the reader of
-  # `missing N` should know which part of it is this.
-  defp ambiguity(project, env, verdicts, unlocked) do
-    case Enum.count(verdicts, fn {_, verdict} -> verdict == :ambiguous end) do
+  # Before `mix deps.get` Mix's list is incomplete, so nothing is called
+  # inactive and every lock entry is requested — the fail-safe direction.
+  # Said once per member so the reader of `missing N` knows the second pass
+  # (`--mix-get`) is what settles it.
+  defp unsettled(project, env, deps) do
+    case Enum.count(deps, fn {_, dep} -> dep.active? == nil end) do
       0 ->
         []
 
       n ->
-        cause =
-          case unlocked do
-            [] ->
-              "a git dependency's own dependencies are unknown before deps.get"
-
-            [one] ->
-              "#{one} is a path dependency whose closure is not in the lock"
-
-            many ->
-              "#{Enum.join(many, ", ")} are path dependencies whose closures are not in the lock"
-          end
-
         [
-          "#{project}: #{n} dependencies may be outside MIX_ENV=#{env} but are requested " <>
-            "anyway — " <> cause
+          "#{project}: dependencies not fetched yet, so #{n} lock entries are requested " <>
+            "whether or not MIX_ENV=#{env} builds them — --mix-get settles that after deps.get"
         ]
     end
   end
 
-  defp units_for(root, project, env, keys, lock, verdicts, direction, build_path) do
+  defp units_for(root, project, env, keys, deps, direction, build_path) do
     project_dir = Path.join(root, project)
 
     keys
     |> Enum.sort()
     |> Enum.map(fn {name, keyed} ->
-      entry = Map.fetch!(lock, name)
-      verdict = Map.fetch!(verdicts, name)
-      resolution = resolve(keyed, verdict, env)
+      %{entry: entry, active?: active?} = Map.fetch!(deps, name)
+      resolution = resolve(keyed, active?, env)
 
       %Unit{
         group: project,
@@ -97,9 +83,6 @@ defmodule Depdep.Provider.Mix do
           project_dir: project_dir,
           name: name,
           env: env,
-          # Kept past resolution: an `:ambiguous` unit is requested like an
-          # active one, but `--compile-deps` must not name it to Mix (#81).
-          env_verdict: verdict,
           direction: direction,
           build_path: build_path
         }
@@ -108,10 +91,11 @@ defmodule Depdep.Provider.Mix do
   end
 
   # A dependency this env never builds is decided before its key matters: there
-  # is nothing to fetch and nothing to offer, whatever the key says. Everything
-  # else keeps the resolution the key computation gave it.
-  defp resolve(_keyed, :inactive, env), do: {:not_for_env, env}
-  defp resolve(keyed, _verdict, _env), do: keyed
+  # is nothing to fetch and nothing to offer, whatever the key says. `nil` —
+  # Mix's list incomplete before `deps.get` — keeps the key: requested, and
+  # settled by the second pass.
+  defp resolve(_keyed, false, env), do: {:not_for_env, env}
+  defp resolve(keyed, _active?, _env), do: keyed
 
   # A skipped or excluded dependency has no key, so it has no object and no
   # version column.
