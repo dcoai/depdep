@@ -62,6 +62,41 @@ defmodule Depdep.CompileTest do
     end
   end
 
+  # uficap's first apt push (#85): `upload/4` asks every unit for its compile
+  # time, and a `.deb` has no build to have one.
+  describe "read/1 on a unit that is not a mix unit" do
+    test "an apt unit has no compile time, and asking is not a crash" do
+      unit = %Unit{
+        group: nil,
+        name: "libbsd0_0.11.7-2_amd64.deb",
+        detail: "-",
+        resolution: {:key, "libbsd0_0.11.7-2_amd64.deb"},
+        object: "apt/v1/debian-bookworm/libbsd0_0.11.7-2_amd64.deb",
+        context: %{
+          filename: "libbsd0_0.11.7-2_amd64.deb",
+          checksum: nil,
+          dir: "/var/cache/apt/archives"
+        }
+      }
+
+      assert Compile.read(unit) == :none
+      assert Compile.saved_us(nil, 0) == nil
+    end
+
+    test "a git mirror unit likewise" do
+      unit = %Unit{
+        group: nil,
+        name: "mirror",
+        detail: "-",
+        resolution: {:key, "x"},
+        object: nil,
+        context: %{repo: "x"}
+      }
+
+      assert Compile.read(unit) == :none
+    end
+  end
+
   describe "the note beside the build" do
     setup do
       dir = Path.join(System.tmp_dir!(), "depdep-note-#{System.unique_integer([:positive])}")

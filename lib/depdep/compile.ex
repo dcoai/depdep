@@ -159,8 +159,12 @@ defmodule Depdep.Compile do
 
   A note that does not parse as an integer is `:none` too: it is a number
   someone will read as time saved, and a guess is worse than a gap.
+
+  A unit of another provider — a `.deb`, a git mirror — has no build and so
+  no note: `:none`, the same answer a mix unit nobody compiled gets. The
+  first apt upload the store ever saw crashed here instead (#85).
   """
-  def read(unit) do
+  def read(%Unit{context: %{project_dir: _, build_path: _}} = unit) do
     with {:ok, contents} <- File.read(note_path(unit)),
          {us, ""} <- Integer.parse(String.trim(contents)) do
       {:ok, us}
@@ -168,6 +172,8 @@ defmodule Depdep.Compile do
       _ -> :none
     end
   end
+
+  def read(%Unit{}), do: :none
 
   @doc """
   What a hit saved: the compile it did not do, less what the transfer cost —
