@@ -229,11 +229,21 @@ for — units, polarity, descriptions, the label keys and their expected values,
 and a starter dashboard — owned here because the metrics are depdep's.
 `mix depdep.profile check` holds it to what the code emits, both ways, and runs
 in CI: a metric added without it cannot land, and neither can a definition
-nothing will ever fill. On every `v*` tag, `mix depdep.profile publish` POSTs
-it to `DEPDEP_METRESIS_URL` with an admin token
-(`DEPDEP_METRESIS_ADMIN_TOKEN`, a protected variable that exists only for tag
-pipelines) and adopts it on the CI domain — so a release is what brings new
-definitions, and nobody adopts anything by hand.
+nothing will ever fill.
+
+**The profile travels with the data.** Every post carries a header,
+`Metresis-Profile: depdep sha256:<hash of the document>`. An instance that
+holds that hash for your token accepts the post as usual; one that does not
+answers `428 profile_missing`, and depdep publishes the document with the same
+ingest token and retries the post once — two round-trips per depdep version
+per instance, ever, and nothing for anyone to run by hand. Whether the
+publish applies at once or waits for a member's approval is the token's
+**capability** (`profile` or `propose`, set when it is minted): while a
+proposal is pending, posts whose metrics are all already defined keep flowing,
+and depdep says once that samples for new metrics wait. A token with neither
+capability is never refused — the data lands as provisional, as it always
+did, and depdep says once that the token cannot carry a profile. Nothing in
+any of this can fail your pipeline.
 
 `depdep.parallelism` is the one worth explaining. Units transfer 8–32 at a time,
 so the summed per-unit time normally *exceeds* the wall-clock span containing

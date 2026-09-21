@@ -37,18 +37,6 @@ test:
     # a field missing (#75). Builds a tarball and writes nothing else.
     - mix hex.build --output /tmp/depdep-package.tar
 
-# The metresis profile is published on tags only, with an admin token that
-# exists only for tag pipelines (DEPDEP_METRESIS_ADMIN_TOKEN: protected, masked).
-# Publishing and adopting change what the CI domain means, so this never runs
-# on a branch, and the ingest token the consumers hold could not do it (#69).
-publish-profile:
-  stage: publish
-  rules:
-    - if: $CI_COMMIT_TAG =~ /^v/
-  script:
-    - mix depdep.profile check
-    - mix depdep.profile publish
-
 # Everything a hex publish would do, done locally, on every tag — package,
 # docs through the ex_doc escript (deps/0 stays empty), hex's own checks — so
 # the day a real publish is wanted (#73) nothing is being tried for the first

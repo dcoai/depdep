@@ -6,6 +6,14 @@ are condensed. Issue numbers are dco-tek/depdep's.
 
 ## Unreleased
 
+- **The metresis profile travels with the data.** Every ingest post carries
+  `Metresis-Profile: depdep sha256:<hash>`; an instance that lacks the hash
+  answers `428 profile_missing`, depdep publishes the document with the same
+  ingest token and retries once. Pending, rejected, queue-full and
+  capability-less answers are one warning line each and exit 0. **Removed:**
+  `mix depdep.profile publish`, the `publish-profile` tag job and
+  `DEPDEP_METRESIS_ADMIN_TOKEN` — no admin token anywhere. Needs a metresis
+  with #243. (#87, from #86)
 - **The toolchain fingerprint is complete.** Every key carries the ERTS, the
   architecture and the compiler environment (`ERL_COMPILER_OPTIONS`,
   `ELIXIR_ERL_OPTIONS`, `MIX_TARGET`); a dependency with a native build

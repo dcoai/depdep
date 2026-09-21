@@ -56,7 +56,10 @@ defmodule Depdep.Metresis do
   def config do
     with {:ok, url} <- instance(),
          {:ok, token} <- env("DEPDEP_METRESIS_TOKEN") do
-      {:ok, %{url: String.trim_trailing(url, "/") <> "/api/v1/ingest", token: token}}
+      base = String.trim_trailing(url, "/")
+
+      {:ok,
+       %{url: base <> "/api/v1/ingest", profiles_url: base <> "/api/v1/profiles", token: token}}
     else
       :unset -> :disabled
       {:error, reason} -> {:error, reason}
@@ -260,15 +263,121 @@ defmodule Depdep.Metresis do
 
       {:ok, cfg} ->
         labels = labels || labels(direction)
+        profile = %{key: "depdep", hash: Depdep.Profile.hash()}
 
         map
         |> documents(labels, direction)
         |> Enum.reduce_while(:ok, fn {key, document}, :ok ->
-          case send_document(cfg, key, document) do
+          case send_with_profile(cfg, key, document, profile) do
             :ok -> {:cont, :ok}
-            error -> {:halt, error}
+            other -> {:halt, other}
           end
         end)
+    end
+  end
+
+  # The profile handshake (#86, metresis #243). Every post carries the hash of
+  # the profile this depdep ships; an instance that does not hold it for this
+  # token answers 428, depdep publishes the document with the same token and
+  # retries the post once — two round-trips per version per instance, ever,
+  # and the emitter keeps no state. Nothing here loops: a second 428 of any
+  # kind is one line and done, and every outcome but a transport failure is
+  # `:ok` or `{:warn, _}`, because the numbers are a by-product of work that
+  # already succeeded.
+  defp send_with_profile(cfg, key, document, profile) do
+    case send_document(cfg, key, document, profile) do
+      {:precondition, "profile_missing", _body} ->
+        case publish_profile(cfg) do
+          :ok ->
+            case send_document(cfg, key, document, profile) do
+              {:precondition, error, body} -> {:warn, precondition(error, body, cfg)}
+              other -> other
+            end
+
+          {:warn, _} = warn ->
+            warn
+
+          error ->
+            error
+        end
+
+      {:precondition, error, body} ->
+        {:warn, precondition(error, body, cfg)}
+
+      other ->
+        other
+    end
+  end
+
+  # What a 428 means for this run. `profile_pending` is only sent for a post
+  # that would register a new key, so what was not recorded is exactly that.
+  defp precondition("profile_pending", _body, cfg),
+    do:
+      "metresis: depdep's profile is awaiting approval on #{instance_of(cfg)}; " <>
+        "samples for new metrics not recorded until then"
+
+  defp precondition("profile_rejected", body, cfg) do
+    reason =
+      case field(body, "reason") do
+        nil -> ""
+        reason -> " — #{reason}"
+      end
+
+    "metresis: depdep's profile was rejected on #{instance_of(cfg)}#{reason}"
+  end
+
+  defp precondition("profile_missing", _body, cfg),
+    do:
+      "metresis: #{instance_of(cfg)} still lacks depdep's profile after publishing it — not retried"
+
+  defp precondition(other, _body, cfg),
+    do: "metresis: #{instance_of(cfg)} answered 428 #{other}; samples not recorded"
+
+  # POST /profiles with the ingest token: applied at once for a token holding
+  # `profile` (201), queued for a member's approval for one holding `propose`
+  # (202, or 200 when that hash already waits). Never `adopt`: adoption is the
+  # domain's, and the token's own profile is all this needs (§4.7 rung 2).
+  defp publish_profile(cfg) do
+    headers = [{~c"authorization", ~c"Bearer " ++ String.to_charlist(cfg.token)}]
+
+    request =
+      {String.to_charlist(cfg.profiles_url), headers, ~c"application/json",
+       Depdep.Json.encode(Depdep.Profile.read())}
+
+    case :httpc.request(:post, request, http_options(), body_format: :binary) do
+      {:ok, {{_, status, _}, _, _}} when status in 200..299 ->
+        :ok
+
+      {:ok, {{_, 403, _}, _, _}} ->
+        {:warn, capability_warning(cfg)}
+
+      {:ok, {{_, 429, _}, _, _}} ->
+        {:warn,
+         "metresis: #{instance_of(cfg)} has too many unapproved profiles for this token " <>
+           "(profile_queue_full); depdep's is not queued, samples not recorded"}
+
+      {:ok, {{_, status, _}, _, body}} ->
+        {:error, "publishing the profile: #{status}: #{String.slice(body, 0, 200)}"}
+
+      {:error, reason} ->
+        {:error, inspect(reason)}
+    end
+  end
+
+  defp capability_warning(cfg),
+    do:
+      "metresis: this token cannot publish depdep's profile on #{instance_of(cfg)} " <>
+        "(needs the profile or propose capability); metrics land without definitions"
+
+  defp instance_of(cfg), do: String.replace_suffix(cfg.url, "/api/v1/ingest", "")
+
+  # Depdep writes JSON and reads none (`Depdep.Json`); the three fields the
+  # handshake reads back are flat strings, and a pattern is enough. A field
+  # that is not there is `nil`.
+  defp field(body, name) do
+    case Regex.run(~r/"#{name}"\s*:\s*"((?:[^"\\]|\\.)*)"/, body) do
+      [_, value] -> value
+      nil -> nil
     end
   end
 
@@ -282,19 +391,33 @@ defmodule Depdep.Metresis do
   """
   def http_options, do: [connect_timeout: @connect_timeout, timeout: @request_timeout]
 
-  defp send_document(cfg, key, document) do
+  # One ingest post. `:ok`; `{:warn, _}` when the instance accepted the data but
+  # the token could not carry a profile (`"profile":"unavailable"`);
+  # `{:precondition, error, body}` for a 428; `{:error, _}` otherwise.
+  defp send_document(cfg, key, document, profile) do
     headers = [
       {~c"authorization", ~c"Bearer " ++ String.to_charlist(cfg.token)},
-      {~c"idempotency-key", String.to_charlist(key)}
+      {~c"idempotency-key", String.to_charlist(key)},
+      {~c"metresis-profile", String.to_charlist("#{profile.key} sha256:#{profile.hash}")}
     ]
 
     request =
       {String.to_charlist(cfg.url), headers, ~c"application/json", Depdep.Json.encode(document)}
 
     case :httpc.request(:post, request, http_options(), body_format: :binary) do
-      {:ok, {{_, status, _}, _, _}} when status in 200..299 -> :ok
-      {:ok, {{_, status, _}, _, body}} -> {:error, "#{status}: #{String.slice(body, 0, 200)}"}
-      {:error, reason} -> {:error, inspect(reason)}
+      {:ok, {{_, status, _}, _, body}} when status in 200..299 ->
+        if field(body, "profile") == "unavailable",
+          do: {:warn, capability_warning(cfg)},
+          else: :ok
+
+      {:ok, {{_, 428, _}, _, body}} ->
+        {:precondition, field(body, "error") || "unknown", body}
+
+      {:ok, {{_, status, _}, _, body}} ->
+        {:error, "#{status}: #{String.slice(body, 0, 200)}"}
+
+      {:error, reason} ->
+        {:error, inspect(reason)}
     end
   end
 end

@@ -79,6 +79,46 @@ defmodule Depdep.MetresisTest do
     port
   end
 
+  # A server that answers a scripted sequence — one `{status, body}` per
+  # request, in order — and hands back every request it received.
+  defp scripted(answers) do
+    {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true, packet: :raw])
+    {:ok, port} = :inet.port(listen)
+    me = self()
+
+    spawn_link(fn ->
+      Enum.each(answers, fn {status, body} ->
+        {:ok, socket} = :gen_tcp.accept(listen)
+        send(me, {:received, read_request(socket, "")})
+
+        :gen_tcp.send(socket, [
+          "HTTP/1.1 #{status} X\r\ncontent-length: #{byte_size(body)}\r\n",
+          "content-type: application/json\r\n\r\n",
+          body
+        ])
+
+        :gen_tcp.close(socket)
+      end)
+    end)
+
+    port
+  end
+
+  defp received_all(n) do
+    for _ <- 1..n do
+      receive do
+        {:received, raw} -> raw
+      after
+        3_000 -> flunk("fewer than #{n} requests arrived")
+      end
+    end
+  end
+
+  defp request_line(raw), do: raw |> String.split("\r\n", parts: 2) |> hd()
+
+  defp header(raw, name),
+    do: Regex.run(~r/^#{name}: (.*)$/mi, raw) |> List.last() |> String.trim()
+
   defp read_request(socket, acc) do
     case :gen_tcp.recv(socket, 0, 2_000) do
       {:ok, data} ->
@@ -125,7 +165,14 @@ defmodule Depdep.MetresisTest do
     test "DEPDEP_METRESIS is the same instance under the shorter name; both names at once is refused" do
       System.put_env("DEPDEP_METRESIS", "http://example/")
       System.put_env("DEPDEP_METRESIS_TOKEN", "t")
-      assert Metresis.config() == {:ok, %{url: "http://example/api/v1/ingest", token: "t"}}
+
+      assert {:ok,
+              %{
+                url: "http://example/api/v1/ingest",
+                profiles_url: "http://example/api/v1/profiles",
+                token: "t"
+              }} =
+               Metresis.config()
 
       System.put_env("DEPDEP_METRESIS_URL", "http://other")
       assert {:error, reason} = Metresis.config()
@@ -254,6 +301,99 @@ defmodule Depdep.MetresisTest do
       empty = %Phase{provider: "mix", direction: :pull, span_us: 0, concurrency: 8, units: []}
       samples = Metresis.samples(Metrics.to_map([empty], :pull, 10))
       refute Enum.any?(samples, &(&1["metric"] == "depdep.parallelism"))
+    end
+  end
+
+  # #86 / metresis #243: the profile travels on the data path. Every post
+  # carries the hash; a 428 is answered by publishing and one retry; nothing
+  # loops; nothing here can fail the run.
+  describe "the profile handshake" do
+    @accepted ~s({"post_id":1,"accepted":1,"rejected":0})
+    @missing ~s({"error":"profile_missing","key":"depdep","have":null})
+
+    test "every ingest post carries Metresis-Profile with the shipped hash" do
+      port = scripted([{200, @accepted}])
+      configure(port)
+      assert Metresis.post(run_map(), :pull) == :ok
+
+      [raw] = received_all(1)
+      assert request_line(raw) =~ "POST /api/v1/ingest"
+      assert header(raw, "metresis-profile") == "depdep sha256:" <> Depdep.Profile.hash()
+    end
+
+    test "profile_missing: publish with the same token, retry once with the same key, and land" do
+      port = scripted([{428, @missing}, {201, ~s({"key":"depdep","hash":"x"})}, {200, @accepted}])
+      configure(port)
+      assert Metresis.post(run_map(), :pull) == :ok
+
+      [first, publish, retry] = received_all(3)
+      assert request_line(first) =~ "POST /api/v1/ingest"
+      assert request_line(publish) =~ "POST /api/v1/profiles"
+      assert header(publish, "authorization") == "Bearer mtr_ing_test"
+      assert publish =~ ~s("key":"depdep")
+      refute publish =~ "adopt"
+      assert request_line(retry) =~ "POST /api/v1/ingest"
+      assert header(retry, "idempotency-key") == header(first, "idempotency-key")
+    end
+
+    test "a 202 from a propose-only token is a publish too; the retry then meets the pending rule" do
+      port =
+        scripted([
+          {428, @missing},
+          {202, ~s({"status":"pending"})},
+          {428, ~s({"error":"profile_pending","key":"depdep"})}
+        ])
+
+      configure(port)
+      assert {:warn, message} = Metresis.post(run_map(), :pull)
+      assert message =~ "awaiting approval on http://127.0.0.1:#{port}"
+      assert message =~ "not recorded until then"
+      assert length(received_all(3)) == 3
+    end
+
+    test "a second profile_missing after publishing is one line, not a loop" do
+      port = scripted([{428, @missing}, {201, "{}"}, {428, @missing}])
+      configure(port)
+      assert {:warn, message} = Metresis.post(run_map(), :pull)
+      assert message =~ "still lacks depdep's profile after publishing it — not retried"
+      assert length(received_all(3)) == 3
+    end
+
+    test "profile_rejected carries the reason and does not publish" do
+      port =
+        scripted([{428, ~s({"error":"profile_rejected","key":"depdep","reason":"units wrong"})}])
+
+      configure(port)
+      assert {:warn, message} = Metresis.post(run_map(), :pull)
+      assert message =~ "rejected on http://127.0.0.1:#{port} — units wrong"
+      assert length(received_all(1)) == 1
+    end
+
+    test "a token with neither capability: data lands, one line about the capability" do
+      port =
+        scripted([{200, ~s({"post_id":1,"accepted":1,"rejected":0,"profile":"unavailable"})}])
+
+      configure(port)
+      assert {:warn, message} = Metresis.post(run_map(), :pull)
+      assert message =~ "cannot publish depdep's profile"
+      assert message =~ "profile or propose capability"
+    end
+
+    test "403 from /profiles is the same capability line; 429 is queue_full" do
+      port = scripted([{428, @missing}, {403, ~s({"error":"forbidden"})}])
+      configure(port)
+      assert {:warn, message} = Metresis.post(run_map(), :pull)
+      assert message =~ "profile or propose capability"
+
+      port = scripted([{428, @missing}, {429, ~s({"error":"profile_queue_full"})}])
+      configure(port)
+      assert {:warn, message} = Metresis.post(run_map(), :pull)
+      assert message =~ "profile_queue_full"
+    end
+
+    test "an unreachable instance is still an error, not a raise" do
+      configure(1)
+      assert {:error, _} = Metresis.post(run_map(), :pull)
     end
   end
 

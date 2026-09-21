@@ -698,6 +698,7 @@ defmodule Depdep.CLI do
     case Metresis.post(Metrics.to_map(phases, direction, elapsed), direction) do
       :ok -> :ok
       :disabled -> :ok
+      {:warn, message} -> warn(message <> " — the run is unaffected")
       {:error, reason} -> warn("metrics not reported (#{reason}) — the run is unaffected")
     end
   end

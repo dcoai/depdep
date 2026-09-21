@@ -94,122 +94,37 @@ defmodule Depdep.ProfileTest do
              Profile.check(extra)
   end
 
-  # §7.11's emitter side: one POST, admin bearer, the document plus `adopt`.
-  describe "publish/4" do
-    defp server(status, body) do
-      {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true, packet: :raw])
-      {:ok, port} = :inet.port(listen)
-      me = self()
+  # #86: the hash every ingest post carries. Canonical JSON — sorted keys,
+  # compact — so the same document hashes the same wherever it is computed,
+  # which is what metresis compares against.
+  describe "hash/0" do
+    test "is sha256 of the canonical JSON, hex, and stable" do
+      assert Profile.hash() =~ ~r/^[0-9a-f]{64}$/
+      assert Profile.hash() == Profile.hash()
 
-      spawn_link(fn ->
-        {:ok, socket} = :gen_tcp.accept(listen)
-        received = read_request(socket, "")
-        send(me, {:received, received})
-
-        :gen_tcp.send(socket, [
-          "HTTP/1.1 #{status} X\r\ncontent-length: #{byte_size(body)}\r\n",
-          "content-type: application/json\r\n\r\n",
-          body
-        ])
-
-        :gen_tcp.close(socket)
-      end)
-
-      port
+      assert Profile.hash() ==
+               :crypto.hash(:sha256, Depdep.Json.encode(Profile.read()))
+               |> Base.encode16(case: :lower)
     end
 
-    defp read_request(socket, acc) do
-      case :gen_tcp.recv(socket, 0, 2_000) do
-        {:ok, data} ->
-          acc = acc <> data
+    test "key order does not matter; one changed description does" do
+      document = Profile.read()
+      reordered = document |> Enum.reverse() |> Map.new()
+      assert Profile.hash(reordered) == Profile.hash(document)
 
-          case String.split(acc, "\r\n\r\n", parts: 2) do
-            [head, body] ->
-              [_, len] = Regex.run(~r/content-length: (\d+)/i, head)
+      changed =
+        Map.update!(document, "metrics", fn [m | rest] ->
+          [Map.put(m, "description", "x") | rest]
+        end)
 
-              if byte_size(body) >= String.to_integer(len),
-                do: acc,
-                else: read_request(socket, acc)
-
-            _ ->
-              read_request(socket, acc)
-          end
-
-        {:error, _} ->
-          acc
-      end
-    end
-
-    defp received do
-      receive do
-        {:received, raw} -> raw
-      after
-        3_000 -> flunk("the server received no request")
-      end
-    end
-
-    test "POSTs the document with adopt: true and the admin bearer" do
-      port = server(201, ~s({"key":"depdep","version":1,"adopted":true}))
-      url = "http://127.0.0.1:#{port}/"
-
-      assert {:ok, answer} =
-               Profile.publish(%{"key" => "depdep", "name" => "Depdep"}, url, "mtr_adm_x")
-
-      assert answer =~ "adopted"
-
-      raw = received()
-      [head, body] = String.split(raw, "\r\n\r\n", parts: 2)
-      assert head =~ "POST /api/v1/profiles HTTP/1.1"
-      assert head =~ "authorization: Bearer mtr_adm_x"
-      assert head =~ "content-type: application/json"
-      assert body =~ ~s("adopt":true)
-      assert body =~ ~s("key":"depdep")
-    end
-
-    test "adopt: false leaves the flag out" do
-      port = server(200, "{}")
-
-      assert {:ok, _} =
-               Profile.publish(%{"key" => "depdep"}, "http://127.0.0.1:#{port}", "t",
-                 adopt: false
-               )
-
-      refute received() =~ "adopt"
-    end
-
-    test "a refusal carries the server's answer" do
-      port = server(422, ~s({"errors":["metric depdep.warmth: unknown quantity"]}))
-
-      assert {:error, message} =
-               Profile.publish(%{"key" => "depdep"}, "http://127.0.0.1:#{port}", "t")
-
-      assert message =~ "422"
-      assert message =~ "depdep.warmth"
-    end
-
-    test "an unreachable instance is an error, not a hang or a raise" do
-      assert {:error, _} = Profile.publish(%{"key" => "depdep"}, "http://127.0.0.1:1", "t")
+      refute Profile.hash(changed) == Profile.hash(document)
     end
   end
 
-  # Doing nothing quietly is how a domain stays on provisional definitions;
-  # the task is only run where publishing is intended, so a missing variable
-  # stops it and names itself.
-  test "mix depdep.profile publish refuses to run without its variables" do
-    System.delete_env("DEPDEP_METRESIS_URL")
-    System.delete_env("DEPDEP_METRESIS_ADMIN_TOKEN")
-
-    assert_raise Mix.Error, ~r/DEPDEP_METRESIS_URL is not set/, fn ->
+  test "mix depdep.profile publish is gone: a usage error, not a silent nothing" do
+    assert_raise Mix.Error, ~r/usage: mix depdep.profile check/, fn ->
       Mix.Tasks.Depdep.Profile.run(["publish"])
     end
-
-    System.put_env("DEPDEP_METRESIS_URL", "http://127.0.0.1:1")
-
-    assert_raise Mix.Error, ~r/DEPDEP_METRESIS_ADMIN_TOKEN is not set/, fn ->
-      Mix.Tasks.Depdep.Profile.run(["publish"])
-    end
-
-    System.delete_env("DEPDEP_METRESIS_URL")
   end
 
   test "the metrics' enumerations are ones metresis accepts" do

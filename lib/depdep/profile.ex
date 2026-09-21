@@ -7,7 +7,10 @@ defmodule Depdep.Profile do
   auto-registered provisional gauges of `number`, with no unit, no polarity, no
   description and no dashboard, because metresis's profiles are shipped in its
   own `priv/profiles/` and nobody wrote one there. metresis #206 settled that
-  the profile is the emitter's to ship and publish (#69). This module owns it.
+  the profile is the emitter's to ship (#69) — and, since #86, to carry on
+  every post: `hash/0` is what `Depdep.Metresis` sends in `Metresis-Profile`,
+  and the document is what it publishes when an instance answers 428. This
+  module owns it.
 
   ## Two directions of drift, both caught
 
@@ -24,9 +27,6 @@ defmodule Depdep.Profile do
   """
 
   alias Depdep.{Metresis, Metrics, Report}
-
-  @connect_timeout 5_000
-  @request_timeout 15_000
 
   @doc """
   Where the document lives, for the task's messages.
@@ -163,41 +163,13 @@ defmodule Depdep.Profile do
   end
 
   @doc """
-  Publishes the document to a metresis instance: `POST /api/v1/profiles`,
-  bearer `token`, `adopt: true` unless `adopt: false` is given (metresis §7.11).
-
-  `:ok`, or `{:error, message}` carrying the server's answer. The token is an
-  **admin** one — publishing a vocabulary and adopting it change what a domain
-  means — and this is the only request depdep makes with one; the ingest token
-  never reaches here. `:httpc` and `Depdep.Json`, as `Depdep.Metresis.post/3`,
-  with its timeouts: no client dependency, and no YAML.
+  The SHA-256 of the document's canonical JSON — sorted keys, no whitespace,
+  `Depdep.Json.encode/1`'s output — as lowercase hex. What every ingest post
+  carries in `Metresis-Profile`, and what metresis compares with the hash it
+  computed the same way over what it holds (metresis #243).
   """
-  def publish(document, url, token, opts \\ []) do
-    :ok = start_httpc()
-
-    body =
-      if Keyword.get(opts, :adopt, true), do: Map.put(document, "adopt", true), else: document
-
-    endpoint = String.trim_trailing(url, "/") <> "/api/v1/profiles"
-
-    request =
-      {String.to_charlist(endpoint),
-       [{~c"authorization", ~c"Bearer " ++ String.to_charlist(token)}], ~c"application/json",
-       Depdep.Json.encode(body)}
-
-    http_options = [connect_timeout: @connect_timeout, timeout: @request_timeout]
-
-    case :httpc.request(:post, request, http_options, body_format: :binary) do
-      {:ok, {{_, status, _}, _, answer}} when status in 200..299 -> {:ok, answer}
-      {:ok, {{_, status, _}, _, answer}} -> {:error, "#{status}: #{String.slice(answer, 0, 500)}"}
-      {:error, reason} -> {:error, inspect(reason)}
-    end
-  end
-
-  defp start_httpc do
-    {:ok, _} = Application.ensure_all_started(:inets)
-    {:ok, _} = Application.ensure_all_started(:ssl)
-    :ok
+  def hash(document \\ read()) do
+    :crypto.hash(:sha256, Depdep.Json.encode(document)) |> Base.encode16(case: :lower)
   end
 
   defp missing(from, in_set, what) do
