@@ -1,40 +1,23 @@
 defmodule Depdep.LeafGitConsumerTest do
   @moduledoc """
-  extc's shape, end to end through the real modules (#81, from extc #170).
+  extc's shape, end to end through the real modules (#81, from extc #170;
+  #89 moved the inputs to Mix's).
 
   Two git dependencies: `extla`, which has hex children of its own, and
   `surfex`, a leaf with none. An `only: [:dev, :docs]` root brings in `ex_doc`
   and its chain, which nothing under `test` reaches. On v0.4.0 `surfex` was
-  absent from the parsed graph — only parents were keys — so it read as
-  `:unknown`, was skipped on every pass, kept the env walk incomplete, and
-  left the six doc dependencies `:ambiguous`: requested, missed, and handed to
-  `mix deps.compile`, which refused them for `test`. #70 names every node the
-  dot touches; this test pins the consumer case so it cannot come back.
+  absent from the parsed `deps.tree` graph — only parents were keys — so it
+  read as unknown, was skipped on every pass, kept the env walk incomplete,
+  and left the six doc dependencies requested, missed, and handed to
+  `mix deps.compile`, which refused them for `test`. Under `Depdep.Deps` the
+  children are what Mix lists (`[]` for a fetched leaf) and env membership is
+  Mix's list itself, so neither can happen. This pins the consumer case.
   """
   use ExUnit.Case, async: true
 
   import Depdep.LockFixture
 
-  alias Depdep.{EnvSet, Graph, Key, Lock}
-
-  # What `mix deps.tree --format dot` printed in extc: surfex only ever a child.
-  @dot ~S"""
-  digraph "dependency tree" {
-    "extc" -> "extla"
-    "extla" -> "jason"
-    "extla" -> "telemetry"
-    "extc" -> "surfex"
-    "extc" -> "jason"
-    "extc" -> "ex_doc"
-    "ex_doc" -> "earmark_parser"
-    "ex_doc" -> "makeup_elixir"
-    "ex_doc" -> "makeup_erlang"
-    "makeup_elixir" -> "makeup"
-    "makeup_elixir" -> "nimble_parsec"
-    "makeup_erlang" -> "makeup"
-    "makeup" -> "nimble_parsec"
-  }
-  """
+  alias Depdep.{Deps, Key}
 
   @docs ~w(ex_doc earmark_parser makeup makeup_elixir makeup_erlang nimble_parsec)
 
@@ -53,47 +36,72 @@ defmodule Depdep.LeafGitConsumerTest do
     ])
   end
 
-  # extc's mix.exs under MIX_ENV=test: ex_doc is declared but not admitted.
-  @roots_under_test ~w(extla surfex jason)
-
-  test "the leaf is present in the graph with an empty closure, like the parent with a full one" do
-    graph = Graph.parse(@dot)
-    assert graph["surfex"] == []
-    assert graph["extla"] == ["jason", "telemetry"]
+  # What `Mix.Dep.load_and_cache/0` lists for extc under MIX_ENV=test after
+  # deps.get: the active set, each fetched dependency with its children. The
+  # doc chain is not in it — Mix applied `only:` — and surfex's children are
+  # `[]`, known and empty.
+  defp after_deps_get do
+    %{
+      complete?: true,
+      deps: %{
+        "extla" => dep_info([{"jason", false}, {"telemetry", false}]),
+        "surfex" => dep_info([]),
+        "jason" => dep_info([]),
+        "telemetry" => dep_info([])
+      }
+    }
   end
 
-  test "Lock.children answers [] for the leaf, not :unknown" do
-    graph = Graph.parse(@dot)
-    assert Lock.children(lock()["surfex"], graph, "surfex") == []
-
-    assert Lock.children(lock()["extla"], graph, "extla") == [
-             {"jason", false},
-             {"telemetry", false}
-           ]
+  test "after deps.get, the leaf is known and empty and the parent has its children" do
+    deps = Deps.from_lock(lock(), after_deps_get())
+    assert deps["surfex"].children == []
+    assert deps["extla"].children == [{"jason", false}, {"telemetry", false}]
   end
 
-  test "both git dependencies key once the graph is in; only the graph-less first pass skips" do
-    {:ok, keys} = Key.compute(lock(), %{}, toolchain(), Graph.parse(@dot))
+  test "both git dependencies key after deps.get; before it, only the graph-less skip" do
+    {:ok, keys} = Key.compute(Deps.from_lock(lock(), after_deps_get()), %{}, toolchain())
     assert {:key, _} = keys["surfex"]
     assert {:key, _} = keys["extla"]
 
-    {:ok, first_pass} = Key.compute(lock(), %{}, toolchain(), %{})
+    {:ok, first_pass} = Key.compute(Deps.from_lock(lock()), %{}, toolchain())
     assert {:skip, reason} = first_pass["surfex"]
     assert reason =~ "git"
   end
 
-  test "with the walk complete, the doc chain is inactive under test and nothing is ambiguous" do
-    verdicts = EnvSet.classify(@roots_under_test, lock(), Graph.parse(@dot))
+  test "after deps.get the doc chain is not for this env, exactly, and nothing is undecided" do
+    deps = Deps.from_lock(lock(), after_deps_get())
 
-    for name <- @docs, do: assert(verdicts[name] == :inactive, "#{name} should be inactive")
-    for name <- ~w(extla surfex jason telemetry), do: assert(verdicts[name] == :active)
-    refute Enum.any?(verdicts, fn {_, v} -> v == :ambiguous end)
+    for name <- @docs, do: assert(deps[name].active? == false, "#{name} should be inactive")
+    for name <- ~w(extla surfex jason telemetry), do: assert(deps[name].active? == true)
+    refute Enum.any?(deps, fn {_, d} -> d.active? == nil end)
   end
 
-  # The state extc's pipelines 2441/2442 were in: what the first pass says
-  # before deps.get, and what the second pass must no longer say after it.
-  test "before deps.get the doc chain is ambiguous — requested anyway, which is the fail-safe" do
-    verdicts = EnvSet.classify(@roots_under_test, lock(), %{})
-    for name <- @docs, do: assert(verdicts[name] == :ambiguous)
+  # The state extc's pipelines 2441/2442 were in: before deps.get nothing is
+  # decided, so everything is requested — the fail-safe — and the second pass
+  # settles it.
+  test "before deps.get nothing is called inactive" do
+    deps = Deps.from_lock(lock())
+    for {_, d} <- deps, do: assert(d.active? == nil)
+  end
+
+  # bizex's shape (#79): a member whose closure arrives through a path
+  # dependency. Mix's list has the path dependency and its children like
+  # anything else, so its closure is active — by construction, not by a walk.
+  test "a path dependency's closure is active because Mix lists it" do
+    lock = Map.new([hex("ash_authentication", "4.15.0", ["assent"]), hex("assent", "0.2.0", [])])
+
+    view = %{
+      complete?: true,
+      deps: %{
+        "tenancy" => dep_info([{"ash_authentication", false}]),
+        "ash_authentication" => dep_info([{"assent", false}]),
+        "assent" => dep_info([])
+      }
+    }
+
+    deps = Deps.from_lock(lock, view)
+    assert deps["ash_authentication"].active? == true
+    assert deps["assent"].active? == true
+    refute Map.has_key?(deps, "tenancy"), "a path dependency is not a lock entry, so not a unit"
   end
 end

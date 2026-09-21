@@ -37,13 +37,21 @@ defmodule Depdep.Key do
 
       key(dep) = sha256(
         schema_version,                       # retires the whole store
-        name, version, inner_checksum,        # the dep's own source
-        elixir, otp, mix_env, build_tools,    # the toolchain
+        elixir, otp, mix_env,                 # the toolchain
+        name, version, inner_checksum,        # the dep's own source (the lock entry)
+        build_tools,                          # mix / rebar3 / make, from the lock
+        env, compile, system_env,             # the declaration's build options (Mix's)
         config_digest(dep.app),               # compile-time config reaching it
         for each declared child, sorted:
           optional and absent -> ("absent", name)
           otherwise           -> ("present", name, key(child))   # <- recursion
       )
+
+  Every input is either the lock entry or a field of the `%Mix.Dep{}` Mix
+  itself converged (`Depdep.Deps`); nothing is re-derived. A dependency
+  compiled under another `env:` than `:prod`, with a custom `compile:` command
+  or with `system_env:` set produces different bytecode from the same source,
+  and those three were not in the key before v3 (#89).
 
   Because each node contributes its own app's config and folds in its children,
   a dependency's closure accumulates config for exactly the apps in that closure
@@ -55,15 +63,17 @@ defmodule Depdep.Key do
   direction — it costs a compile, never a wrong restore.
   """
 
-  # v2 is when objects gained `deps/` alongside `_build/`. A v1 object holds only
-  # half of what a v2 restore expects, and the difference is invisible at restore
-  # time — it just recompiles. The prefix is in the key precisely so a change to
-  # what an object CONTAINS retires every old object rather than mixing shapes.
+  # v2 is when objects gained `deps/` alongside `_build/`. v3 is when the key's
+  # inputs became Mix's own (#89): the build options a declaration carries —
+  # `env:`, `compile:`, `system_env:` — joined the key, so no v2 object can be
+  # trusted to have been built the way a v3 key says. The prefix is in the key
+  # precisely so a change to what an object CONTAINS or what its key MEANS
+  # retires every old object rather than mixing shapes.
   #
   # CHANGING THIS INVALIDATES EVERY CONSUMER'S STORE AT ONCE. It is a breaking
   # change in the semver sense and needs a major version and a migration note,
   # not an edit.
-  @schema "v2"
+  @schema "v3"
 
   @doc "The schema version this build of depdep reads and writes."
   def schema, do: @schema
@@ -87,19 +97,19 @@ defmodule Depdep.Key do
   produce a cycle, so this is a guard against a malformed lock rather than an
   expected state — but the alternative is a hang with no explanation.
   """
-  def compute(lock, config, toolchain, graph \\ %{}) do
-    lock
+  def compute(deps, config, toolchain) do
+    deps
     |> Map.keys()
     |> Enum.sort()
     |> Enum.reduce_while({:ok, %{}}, fn name, {:ok, acc} ->
-      case resolve(name, lock, config, toolchain, acc, MapSet.new(), graph) do
+      case resolve(name, deps, config, toolchain, acc, MapSet.new()) do
         {:ok, acc} -> {:cont, {:ok, acc}}
         {:error, e} -> {:halt, {:error, e}}
       end
     end)
   end
 
-  defp resolve(name, lock, config, toolchain, acc, visiting, graph) do
+  defp resolve(name, deps, config, toolchain, acc, visiting) do
     cond do
       Map.has_key?(acc, name) ->
         {:ok, acc}
@@ -108,49 +118,47 @@ defmodule Depdep.Key do
         {:error, {:cycle, name}}
 
       true ->
-        entry = Map.fetch!(lock, name)
-
-        resolve_entry(
+        resolve_dep(
           name,
-          entry,
-          lock,
+          Map.fetch!(deps, name),
+          deps,
           config,
           toolchain,
           acc,
-          MapSet.put(visiting, name),
-          graph
+          MapSet.put(visiting, name)
         )
     end
   end
 
-  defp resolve_entry(name, entry, lock, config, toolchain, acc, visiting, graph) do
-    case Depdep.Lock.children(entry, graph, name) do
-      :unknown ->
-        {:ok, Map.put(acc, name, {:skip, "git dependency — the lock carries no dependency list"})}
+  defp resolve_dep(name, %{children: :unknown}, _deps, _config, _toolchain, acc, _visiting) do
+    {:ok,
+     Map.put(
+       acc,
+       name,
+       {:skip, "git dependency — its dependencies are unknown until mix deps.get"}
+     )}
+  end
 
-      children ->
-        present = Enum.filter(children, fn {child, _opt} -> Map.has_key?(lock, child) end)
+  defp resolve_dep(name, dep, deps, config, toolchain, acc, visiting) do
+    present = Enum.filter(dep.children, fn {child, _opt} -> Map.has_key?(deps, child) end)
 
-        case Enum.reduce_while(present, {:ok, acc}, fn {child, _}, {:ok, acc} ->
-               case resolve(child, lock, config, toolchain, acc, visiting, graph) do
-                 {:ok, acc} -> {:cont, {:ok, acc}}
-                 {:error, e} -> {:halt, {:error, e}}
-               end
-             end) do
-          {:error, e} ->
-            {:error, e}
-
-          {:ok, acc} ->
-            {:ok,
-             Map.put(acc, name, key_for(name, entry, children, lock, config, toolchain, acc))}
-        end
+    case Enum.reduce_while(present, {:ok, acc}, fn {child, _}, {:ok, acc} ->
+           case resolve(child, deps, config, toolchain, acc, visiting) do
+             {:ok, acc} -> {:cont, {:ok, acc}}
+             {:error, e} -> {:halt, {:error, e}}
+           end
+         end) do
+      {:error, e} -> {:error, e}
+      {:ok, acc} -> {:ok, Map.put(acc, name, key_for(name, dep, deps, config, toolchain, acc))}
     end
   end
 
-  defp key_for(name, entry, children, lock, config, toolchain, acc) do
+  defp key_for(name, dep, deps, config, toolchain, acc) do
+    entry = dep.entry
+
     skipped =
-      Enum.find(children, fn {child, _} ->
-        Map.has_key?(lock, child) and match?({:skip, _}, Map.fetch!(acc, child))
+      Enum.find(dep.children, fn {child, _} ->
+        Map.has_key?(deps, child) and match?({:skip, _}, Map.fetch!(acc, child))
       end)
 
     case skipped do
@@ -163,7 +171,7 @@ defmodule Depdep.Key do
         # `ash` guards whole source files on `Code.ensure_loaded?(Plug)`. So
         # absence is recorded positively rather than omitted.
         child_parts =
-          Enum.map(children, fn {child, _optional} ->
+          Enum.map(dep.children, fn {child, _optional} ->
             case Map.get(acc, child) do
               {:key, hash} -> "present #{child} #{hash}"
               nil -> "absent #{child}"
@@ -178,6 +186,9 @@ defmodule Depdep.Key do
               "version=#{Depdep.Lock.version(entry)}",
               "source=#{Depdep.Lock.inner_checksum(entry)}",
               "tools=#{Depdep.Lock.build_tools(entry)}",
+              "env=#{dep.env}",
+              "compile=#{dep.compile || ""}",
+              "system_env=#{inspect(dep.system_env)}",
               "config=#{Depdep.Config.digest_for(config, name)}"
             ] ++ child_parts
 

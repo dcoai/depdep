@@ -11,6 +11,16 @@ The consumer-found defects of v0.5.0, and one URL for the store. A minor:
 bootstrap script and CI line change only in the tag, and every object path
 is unchanged — no store refill.
 
+- **Schema v3: the key's inputs are Mix's own.** Children, the env rule and
+  the build options a declaration carries (`env:`, `compile:`, `system_env:`
+  — none of which was in the key before) come from the converge `mix deps`
+  runs, asked inside the project; the parsed `mix deps.tree` graph, the
+  hand-written `only:` walk and the lock's child parser are gone. A path
+  dependency's closure is active because Mix lists it (#79, by construction).
+  Before `mix deps.get`, where Mix's list is incomplete, nothing is excluded
+  and `--mix-get`'s second pass settles it. **Every object path changes: a
+  consumer's first pipeline on this version refills the store, the second is
+  warm; v2 objects are left for `--sweep`.** (#94, from #89)
 - **`DEPDEP_STORE`**: one URL for the shape of the store —
   `s3://ACCESS_KEY@host:port/bucket?region=…` (`s3+https` for TLS) — beside
   `DEPDEP_SECRET_KEY`, which stays its own variable; a URL carrying a

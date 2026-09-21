@@ -23,16 +23,6 @@ defmodule Depdep.Compile do
   would have been, with the same error text. The store had nothing to do with
   it.
 
-  ## Only what this env is known to build
-
-  A miss is named to Mix only when the env walk said `:active` exactly. A unit
-  still `:ambiguous` after the second pass — the graph could not be read, so a
-  git dependency's children are unknown and an unreached entry *might* be one
-  of them — was rightly requested from the store, but naming it to
-  `mix deps.compile` under an env that does not build it is refused
-  (`Unknown dependency X for environment Y`) and ends the run for nothing
-  (#81). It is left to the consumer's own `mix compile`, and said so.
-
   ## What is recorded, and where
 
   Each measured unit's microseconds go to `<build_path>/.depdep/<name>.compile`,
@@ -44,26 +34,18 @@ defmodule Depdep.Compile do
   alias Depdep.Unit
 
   @doc """
-  Which of `units` to compile, given the labels the pull left `:missing`:
-  `{to_compile, held}`. `held` are misses whose env verdict is not exact.
+  Which of `units` to compile: those whose label the pull left `:missing`, or
+  those a predicate picks — the no-store path, where a miss is anything absent
+  that this env builds.
 
-  Given a predicate instead of labels — the no-store path, where a miss is
-  anything absent that this env builds — the same split, the same rule.
+  Every unit here is one Mix's own list says this env builds (`Depdep.Deps`),
+  so there is nothing to hold back: the verdict #83 and #84 filtered on no
+  longer exists (#89).
   """
   def select(units, missing_labels) when is_list(missing_labels),
     do: select(units, &(Unit.label(&1) in missing_labels))
 
-  def select(units, missing?) when is_function(missing?, 1) do
-    units
-    |> Enum.filter(missing?)
-    |> Enum.split_with(&(&1.context.env_verdict == :active))
-  end
-
-  @doc "The one line a held unit gets, on either path."
-  def held_warning(unit, env) do
-    "#{Unit.label(unit)}: not compiled — may be outside MIX_ENV=#{env}, " <>
-      "the dependency graph was not available"
-  end
+  def select(units, missing?) when is_function(missing?, 1), do: Enum.filter(units, missing?)
 
   @doc """
   Compiles `units` (misses of the mix provider, any members), returning

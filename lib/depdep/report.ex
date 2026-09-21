@@ -23,7 +23,7 @@ defmodule Depdep.Report do
   this project is unkeyable", and that is worth reading.
 
   `not for this env` is the one bucket decided before the key: a lock entry the
-  current `MIX_ENV` never builds (`Depdep.EnvSet`). It is neither a miss — the
+  current `MIX_ENV` never builds, by Mix's own list (`Depdep.Deps`). It is neither a miss — the
   store could not have had it — nor a skip, which means depdep *cannot* help.
   Kept out of both so that `missing N` can trend to zero and mean it (#58).
   """

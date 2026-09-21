@@ -3,62 +3,36 @@ defmodule Depdep.CompileTest do
 
   alias Depdep.{Compile, Unit}
 
-  # extc's failure (#81): a miss the env walk could only call ambiguous was
-  # named to `mix deps.compile`, which refused it for the env and ended the run.
-  describe "select/2 — only misses this env is known to build" do
-    defp unit(name, verdict) do
+  # What --compile-deps names to Mix: the misses, and nothing restored. Every
+  # unit here is one Mix's own list says this env builds (#89), so there is
+  # no verdict to hold on any more.
+  describe "select/2 — the misses" do
+    defp unit(name) do
       %Unit{
         group: "app",
         name: name,
         resolution: {:key, "abc"},
         object: nil,
         detail: "-",
-        context: %{project_dir: "/app", name: name, env: :test, env_verdict: verdict}
+        context: %{project_dir: "/app", name: name, env: :test}
       }
     end
 
-    test "an active miss is compiled, an ambiguous one is held, a hit is not mentioned" do
-      units = [unit("jason", :active), unit("earmark_parser", :ambiguous), unit("spark", :active)]
+    test "misses by label; a hit is not mentioned" do
+      units = [unit("jason"), unit("earmark_parser"), unit("spark")]
 
-      assert {[%Unit{name: "jason"}], [%Unit{name: "earmark_parser"}]} =
+      assert [%Unit{name: "jason"}, %Unit{name: "earmark_parser"}] =
                Compile.select(units, ["app/jason", "app/earmark_parser"])
     end
 
     # The no-store path has no pull to say what is missing; it asks a predicate.
-    test "given a predicate, the same split: absent active compiled, absent ambiguous held" do
-      units = [unit("jason", :active), unit("earmark_parser", :ambiguous), unit("spark", :active)]
-      absent? = &(&1.name != "spark")
-
-      assert {[%Unit{name: "jason"}], [%Unit{name: "earmark_parser"}]} =
-               Compile.select(units, absent?)
+    test "given a predicate, the same selection" do
+      units = [unit("jason"), unit("spark")]
+      assert [%Unit{name: "jason"}] = Compile.select(units, &(&1.name != "spark"))
     end
 
-    test "the held line names the unit and the env, and is the same on both paths" do
-      assert Compile.held_warning(unit("earmark_parser", :ambiguous), :test) ==
-               "app/earmark_parser: not compiled — may be outside MIX_ENV=test, " <>
-                 "the dependency graph was not available"
-    end
-
-    test "nothing missing, nothing compiled, nothing held" do
-      assert Compile.select([unit("jason", :active)], []) == {[], []}
-    end
-  end
-
-  describe "saved_us/2 — a conservative lower bound" do
-    test "the compile not done, less what the transfer cost" do
-      assert Compile.saved_us(2_500_000, 400_000) == 2_100_000
-    end
-
-    test "never below zero: a transfer slower than the compile saved nothing, not less" do
-      assert Compile.saved_us(100_000, 400_000) == 0
-    end
-
-    test "nothing known is nothing reported, not zero" do
-      assert Compile.saved_us(nil, 400_000) == nil
-    end
-
-    test "a present unit saved the whole compile" do
-      assert Compile.saved_us(2_500_000, 0) == 2_500_000
+    test "nothing missing, nothing compiled" do
+      assert Compile.select([unit("jason")], []) == []
     end
   end
 

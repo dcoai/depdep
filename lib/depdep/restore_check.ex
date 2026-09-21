@@ -21,13 +21,13 @@ defmodule Depdep.RestoreCheck do
   key missed an input, the day it happens.
   """
 
-  alias Depdep.{Member, Metrics, Report, Unit}
+  alias Depdep.{Metrics, Report, Unit}
 
   @doc """
   Mix's verdict on every unit, per member: `%{label => :ok | {:rebuild, why}}`.
 
-  One `Mix.Dep.load_and_cache/0` per member, inside the member's project, the
-  cache cleared first so the answer reflects the disk as the restore left it.
+  One converge per member (`Depdep.Deps.converged/2`), inside the member's
+  project, so the answer reflects the disk as the restore left it.
   A unit Mix does not list — outside the env, or not a dependency at all —
   is absent from the map and left alone.
   """
@@ -36,12 +36,9 @@ defmodule Depdep.RestoreCheck do
     |> Enum.group_by(& &1.context.project_dir)
     |> Enum.flat_map(fn {dir, member_units} ->
       by_app =
-        Member.ask(dir, env, fn ->
-          Mix.Dep.clear_cached()
-
-          Mix.Dep.load_and_cache()
-          |> Map.new(fn dep -> {Atom.to_string(dep.app), verdict(dep)} end)
-        end)
+        dir
+        |> Depdep.Deps.converged(env)
+        |> Map.new(fn dep -> {Atom.to_string(dep.app), verdict(dep)} end)
 
       for unit <- member_units, verdict = Map.get(by_app, unit.name), verdict != nil do
         {Unit.label(unit), verdict}

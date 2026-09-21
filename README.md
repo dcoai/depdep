@@ -57,19 +57,34 @@ dependencies. A cache layer has to re-establish that invariant for itself:
 
 ```
 key(dep) = sha256(
-  schema_version,
-  name, version, inner_checksum,        # the dep's own source
-  elixir, otp, mix_env, build_tools,    # the toolchain
+  schema_version,                       # v3
+  elixir, otp, mix_env,                 # the toolchain
+  name, version, inner_checksum,        # the dep's own source: the lock entry
+  build_tools,                          # mix / rebar3 / make, from the lock
+  env, compile, system_env,             # the declaration's build options, from Mix
   config_digest(dep.app),               # compile-time config reaching it
-  for each declared child, sorted:
+  for each child Mix lists, sorted:
     optional and absent -> ("absent",  name)
     otherwise           -> ("present", name, key(child))   # <- recursion
 )
 ```
 
+**Every input is Mix's own.** The lock entry is Mix's; the children, the
+`only:` rule that decides what this env builds, and the build options a
+declaration carries (`env:`, `compile:`, `system_env:`) come from the same
+converge `mix deps` runs, asked inside your project — not from a parsed
+lockfile, a parsed `mix deps.tree`, or a hand-written walk of the `only:`
+rule, which is how depdep did it through v0.5 and where every defect it
+shipped lived. Nothing is re-derived; the key is enumerable.
+
 Compile-time configuration is in the key for the same reason: `Application.compile_env/2`
 and module-level attributes bake values into bytecode, so two members that
 configure a package differently need different objects.
+
+**Upgrading past v0.5 refills the store once.** The v3 key changes every
+object path, so each consumer's first pipeline on this version is a cold pull
+that pushes everything again, and the second is warm. v2 objects are left for
+`--sweep` to reclaim.
 
 ## Why no dependencies
 
@@ -288,13 +303,12 @@ dependency list, so before `mix deps.get` there is no way to know what it
 depends on — and since a dependency's compiled output is a function of its
 dependencies', it cannot be keyed, and neither can anything above it. One
 badly-placed fork disables caching for its whole cone. After `deps.get` the
-source is on disk and Mix has resolved the graph, so depdep asks Mix for it and
-keys those dependencies properly. This used to be a second `--pull` line the
-consumer had to remember (and two of four did not); with `--mix-get` it is
-depdep's own second pass, over only the units the first could not settle. The
-same pass re-reads the `MIX_ENV` question with the graph in hand, so a
-dependency the first pass could only call "maybe outside this env" is settled
-exactly.
+source is on disk and Mix lists its children, so depdep keys those
+dependencies properly. This used to be a second `--pull` line the consumer had
+to remember (and two of four did not); with `--mix-get` it is depdep's own
+second pass, over only the units the first could not settle. The same pass
+asks the `MIX_ENV` question with Mix's list complete, so a lock entry the
+first pass could only request is settled exactly.
 
 **What `--mix-get` changes about failure.** `--pull` alone never fails a job.
 With `deps.get` inside it, a fetch that fails has to fail the job exactly as the
@@ -313,10 +327,8 @@ as it is, and each dependency's compile time is read off the boundaries Mix
 already prints — `==> jason` to `Generated jason app` — so there is no
 `MIX_DEBUG` noise and nothing to parse in your pipeline. rebar3 dependencies
 print no end marker, so theirs runs to the next boundary and is labelled as
-such. Only a miss the env walk settled as active is named: one it could only
-call "maybe outside this env" — possible when the dependency graph could not be
-read — is left to your `mix compile` and said so, since Mix would refuse it
-for the env. The number is written beside the build (`_build/<env>/.depdep/<name>.compile`)
+such. Every miss named is one Mix's own list says this env builds, so none is
+refused. The number is written beside the build (`_build/<env>/.depdep/<name>.compile`)
 for `--push` to carry with the object, and posted as `depdep.compile`.
 
 This is the one place depdep may fail a job: a dependency that does not compile
@@ -485,8 +497,8 @@ a bug worth reporting.
   dependency it will not key. Before `mix deps.get` that is every git
   dependency — the lockfile carries no dependency list for it, so no Merkle
   key can be computed — and its dependents are skipped with it, which is why
-  one git dependency can account for several. After `deps.get` depdep asks Mix
-  for the graph and keys them, so with `--mix-get` a git dependency ends the
+  one git dependency can account for several. After `deps.get` Mix lists its
+  children and depdep keys them, so with `--mix-get` a git dependency ends the
   same invocation `pulled` or `missing`, never `skipped`. A `skipped N` that
   persists across the second pass is worth reading: it is a dependency Mix did
   not resolve for this env at all.
@@ -495,19 +507,18 @@ a bug worth reporting.
   `only: :dev`. The lock lists every dependency resolved under *any*
   environment, and depdep used to ask the store for all of them — a `GET` per
   job that could only ever miss, since no `--push` from a test job will ever
-  produce a compiled `ex_doc`. Decided from your `mix.exs` and the lock's own
-  edges before any key is computed or any request made, and kept out of
-  `missing` so that number can reach zero and mean it.
+  produce a compiled `ex_doc`. Decided by Mix's own list of what this env
+  builds — the same converge `mix deps` runs, with `only:`, path dependencies
+  and everything else Mix knows — and kept out of `missing` so that number can
+  reach zero and mean it.
 
-  One honest limit: before `mix deps.get`, a git dependency's own dependencies
-  are unknown, so a lock entry the walk did not reach *might* be one of them.
-  A path dependency has the same effect for a different reason — its closure
-  is never in the lock — so a member with path dependencies requests its
-  unreached entries rather than excluding them, and the warning names the
-  path dependency.
-  Rather than guess, depdep requests those as it always did and says so once —
-  `N dependencies may be outside MIX_ENV=test but are requested anyway`. A pull
-  after `deps.get` has the graph and decides exactly.
+  One honest limit: Mix can only list a dependency's children once its source
+  is on disk, so before `mix deps.get` the list is incomplete and nothing is
+  excluded — every lock entry is requested, said once (`dependencies not
+  fetched yet, so N lock entries are requested …`), and the second pass of
+  `--mix-get` decides exactly and re-buckets the misses that were never
+  buildable. Without `--mix-get` a cold checkout requests its dev-only chain
+  every run; that is the shape depdep no longer optimises for.
 
 To confirm the store is being used at all rather than a CI cache underneath it,
 look for zero recompiles of dependencies in the compile output: every `==>` line

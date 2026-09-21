@@ -74,7 +74,7 @@ defmodule Depdep.CLISavedIntegrationTest do
     [{path, {_bytes, metadata}}] =
       ctx.store
       |> FakeStore.objects()
-      |> Enum.filter(fn {k, _} -> String.starts_with?(k, "v2/") end)
+      |> Enum.filter(fn {k, _} -> String.starts_with?(k, "v3/") end)
 
     assert metadata == %{"compile-us" => "2500000"}
     assert path =~ "jason"
