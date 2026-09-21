@@ -257,6 +257,77 @@ defmodule Depdep.MetresisTest do
     end
   end
 
+  # #91/#96: a restored unit Mix would rebuild is a miss with Mix's reason,
+  # and the run says how many — every run, zero included, because "0 on every
+  # consumer" is the claim the key makes and it has to be visible.
+  describe "rebuilt after restore" do
+    defp rebuilt(name, why) do
+      %Unit{
+        provider: "mix",
+        label: "app/#{name}",
+        bucket: :missing,
+        reason: "rebuilt — " <> why,
+        rebuilt: true,
+        download_us: 10,
+        restore_us: 10,
+        bytes: 1
+      }
+    end
+
+    test "the run posts the count, and each such unit's samples carry the reason" do
+      units = [
+        rebuilt("mint", "the dependency build is outdated"),
+        rebuilt("finch", "the dependency build is outdated")
+      ]
+
+      phase = %Phase{
+        provider: "mix",
+        direction: :pull,
+        span_us: 50,
+        concurrency: 8,
+        tally: %{missing: 2},
+        units: units
+      }
+
+      samples = Metresis.samples(Metrics.to_map([phase], :pull, 100))
+
+      assert %{"value" => 2} =
+               Enum.find(samples, &(&1["metric"] == "depdep.rebuilt_after_restore"))
+
+      for sample <- Enum.filter(samples, &(&1["metric"] == "depdep.download")) do
+        assert sample["labels"]["bucket"] == "missing"
+        assert sample["labels"]["reason"] =~ "rebuilt — the dependency build is outdated"
+      end
+    end
+
+    test "a clean run posts zero, not nothing", %{} do
+      samples = Metresis.samples(run_map())
+
+      assert %{"value" => 0} =
+               Enum.find(samples, &(&1["metric"] == "depdep.rebuilt_after_restore"))
+    end
+
+    test "the JSON --metrics writes carries the count and the flag" do
+      map =
+        Metrics.to_map(
+          [
+            %Phase{
+              provider: "mix",
+              direction: :pull,
+              span_us: 1,
+              concurrency: 1,
+              units: [rebuilt("mint", "x")]
+            }
+          ],
+          :pull,
+          1
+        )
+
+      assert map.rebuilt_after_restore == 1
+      assert [%{rebuilt: true}] = hd(map.phases).units
+    end
+  end
+
   # #59: the number exists only on a unit --compile-deps compiled. Absence is
   # not zero, so every other unit posts no `depdep.compile` at all.
   describe "compile time is posted only where it was measured" do

@@ -26,6 +26,12 @@ defmodule Depdep.RestoreCheck do
   @doc """
   Mix's verdict on every unit, per member: `%{label => :ok | {:rebuild, why}}`.
 
+  A second converge, on purpose. The one that keyed the units
+  (`Depdep.Deps.read/2`) ran before the transfer, and what it saw is not what
+  the restore left: the manifests Mix judges arrive *with* the objects. Two
+  questions, two moments, two converges — folding them would ask Mix about a
+  disk it has not seen yet (#96).
+
   One converge per member (`Depdep.Deps.converged/2`), inside the member's
   project, so the answer reflects the disk as the restore left it.
   A unit Mix does not list — outside the env, or not a dependency at all —
