@@ -101,30 +101,161 @@ defmodule Depdep.S3 do
     end
   end
 
+  @separate ~w(DEPDEP_ENDPOINT DEPDEP_BUCKET DEPDEP_ACCESS_KEY DEPDEP_REGION)
+
   @doc """
-  Reads the four required environment variables, or says which one is missing.
+  Where the store is, from the environment, or why it cannot be reached.
+
+  Two forms, and only one may be present (#88):
+
+      DEPDEP_STORE=s3://ACCESS_KEY@host:9000/bucket?region=us-east-1
+      DEPDEP_SECRET_KEY=…
+
+  or the four `DEPDEP_ENDPOINT`, `DEPDEP_BUCKET`, `DEPDEP_ACCESS_KEY` and
+  `DEPDEP_REGION` beside the same `DEPDEP_SECRET_KEY`. The URL carries the
+  shape of the store and the access key; **the secret is never in it** — a
+  URL with a password component is refused, because a URL ends up in a shell
+  history and a masked variable does not. `s3` is a plain-http endpoint, as
+  `DEPDEP_ENDPOINT` is usually written; `s3+https` (or `https`) is TLS.
+  Both forms at once is refused rather than merged, for the reason a typo in
+  `DEPDEP_ENABLED` is: a half-edited configuration must be loud.
 
   `{:error, reason}` here is not a failure — the caller reports it and carries on
   without a store. See `Depdep.CLI`.
   """
   def config do
-    with {:ok, endpoint} <- env("DEPDEP_ENDPOINT"),
-         {:ok, bucket} <- env("DEPDEP_BUCKET"),
-         {:ok, access_key} <- env("DEPDEP_ACCESS_KEY"),
-         {:ok, secret_key} <- env("DEPDEP_SECRET_KEY"),
-         %URI{host: host, port: port, scheme: scheme} when is_binary(host) <- URI.parse(endpoint) do
+    with :ok <- one_form(),
+         {:ok, secret_key} <- required("DEPDEP_SECRET_KEY"),
+         {:ok, shape} <- shape(),
+         %URI{host: host, port: port, scheme: scheme} when is_binary(host) <-
+           URI.parse(shape.endpoint) do
       {:ok,
        %{
-         endpoint: String.trim_trailing(endpoint, "/"),
-         bucket: bucket,
-         access_key: access_key,
+         endpoint: String.trim_trailing(shape.endpoint, "/"),
+         bucket: shape.bucket,
+         access_key: shape.access_key,
          secret_key: secret_key,
-         region: System.get_env("DEPDEP_REGION") || "us-east-1",
+         region: shape.region,
          host_header: host_header(host, port, scheme)
        }}
     else
-      {:error, missing} -> {:error, "#{missing} is not set"}
+      {:error, reason} -> {:error, reason}
       _ -> {:error, "DEPDEP_ENDPOINT is not a valid URL"}
+    end
+  end
+
+  defp one_form do
+    case {System.get_env("DEPDEP_STORE"),
+          Enum.filter(@separate, &(System.get_env(&1) not in [nil, ""]))} do
+      {store, [_ | _] = set} when store not in [nil, ""] ->
+        {:error,
+         "DEPDEP_STORE and #{Enum.join(set, ", ")} are both set — use the URL or the " <>
+           "separate variables, not both"}
+
+      _ ->
+        :ok
+    end
+  end
+
+  # The store's shape from whichever form is present: endpoint, bucket,
+  # access key, region.
+  defp shape do
+    case env("DEPDEP_STORE") do
+      {:ok, url} ->
+        store_url(url)
+
+      {:error, _} ->
+        with {:ok, endpoint} <- required("DEPDEP_ENDPOINT"),
+             {:ok, bucket} <- required("DEPDEP_BUCKET"),
+             {:ok, access_key} <- required("DEPDEP_ACCESS_KEY") do
+          {:ok,
+           %{
+             endpoint: endpoint,
+             bucket: bucket,
+             access_key: access_key,
+             region: System.get_env("DEPDEP_REGION") || "us-east-1"
+           }}
+        end
+    end
+  end
+
+  defp required(name) do
+    case env(name) do
+      {:ok, value} -> {:ok, value}
+      {:error, ^name} -> {:error, "#{name} is not set"}
+    end
+  end
+
+  @doc """
+  `DEPDEP_STORE` parsed: `{:ok, %{endpoint, bucket, access_key, region}}` or
+  `{:error, reason}` naming what a store URL looks like.
+  """
+  def store_url(url) do
+    uri = URI.parse(url)
+
+    with {:ok, scheme} <- store_scheme(uri.scheme),
+         {:ok, access_key} <- store_userinfo(uri.userinfo),
+         :ok <- if(is_binary(uri.host) and uri.host != "", do: :ok, else: {:error, :host}),
+         {:ok, bucket} <- store_bucket(uri.path) do
+      # `URI.parse/1` knows no default port for `s3`, so a port is only ever
+      # the one written; for `http`/`https` the scheme default is dropped.
+      port =
+        if uri.port && uri.port != URI.default_port(scheme), do: ":#{uri.port}", else: ""
+
+      region = (uri.query && URI.decode_query(uri.query)["region"]) || "us-east-1"
+
+      {:ok,
+       %{
+         endpoint: "#{scheme}://#{uri.host}#{port}",
+         bucket: bucket,
+         access_key: access_key,
+         region: region
+       }}
+    else
+      {:error, :host} ->
+        {:error, "DEPDEP_STORE has no host — it looks like s3://ACCESS_KEY@host:port/bucket"}
+
+      {:error, reason} when is_binary(reason) ->
+        {:error, reason}
+    end
+  end
+
+  defp store_scheme("s3"), do: {:ok, "http"}
+  defp store_scheme("http"), do: {:ok, "http"}
+  defp store_scheme("s3+https"), do: {:ok, "https"}
+  defp store_scheme("https"), do: {:ok, "https"}
+
+  defp store_scheme(other),
+    do: {:error, "DEPDEP_STORE scheme #{inspect(other)} is not one of s3, s3+https, http, https"}
+
+  defp store_userinfo(nil),
+    do:
+      {:error,
+       "DEPDEP_STORE carries no access key — it looks like s3://ACCESS_KEY@host:port/bucket"}
+
+  defp store_userinfo(userinfo) do
+    case String.split(userinfo, ":", parts: 2) do
+      [key] when key != "" ->
+        {:ok, URI.decode(key)}
+
+      [_, _] ->
+        {:error,
+         "DEPDEP_STORE carries a password — the secret goes in DEPDEP_SECRET_KEY, never in a URL"}
+
+      _ ->
+        {:error,
+         "DEPDEP_STORE carries no access key — it looks like s3://ACCESS_KEY@host:port/bucket"}
+    end
+  end
+
+  defp store_bucket(path) do
+    case String.split(path || "", "/", trim: true) do
+      [bucket] ->
+        {:ok, bucket}
+
+      _ ->
+        {:error,
+         "DEPDEP_STORE's path must be exactly the bucket — s3://ACCESS_KEY@host:port/bucket"}
     end
   end
 

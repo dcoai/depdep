@@ -54,11 +54,31 @@ defmodule Depdep.Metresis do
   Empty reads as unset, as the store's variables and `Depdep.CLI.enabled?/0` do.
   """
   def config do
-    with {:ok, url} <- env("DEPDEP_METRESIS_URL"),
+    with {:ok, url} <- instance(),
          {:ok, token} <- env("DEPDEP_METRESIS_TOKEN") do
       {:ok, %{url: String.trim_trailing(url, "/") <> "/api/v1/ingest", token: token}}
     else
       :unset -> :disabled
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # `DEPDEP_METRESIS` is the instance's URL, the same value `DEPDEP_METRESIS_URL`
+  # holds, under the shorter name the store's `DEPDEP_STORE` set (#88). Both at
+  # once is refused rather than merged, as the store's two forms are.
+  defp instance do
+    case {env("DEPDEP_METRESIS"), env("DEPDEP_METRESIS_URL")} do
+      {{:ok, _}, {:ok, _}} ->
+        {:error, "DEPDEP_METRESIS and DEPDEP_METRESIS_URL are both set — use one"}
+
+      {{:ok, url}, :unset} ->
+        {:ok, url}
+
+      {:unset, {:ok, url}} ->
+        {:ok, url}
+
+      {:unset, :unset} ->
+        :unset
     end
   end
 
@@ -234,6 +254,9 @@ defmodule Depdep.Metresis do
     case config() do
       :disabled ->
         :disabled
+
+      {:error, reason} ->
+        {:error, reason}
 
       {:ok, cfg} ->
         labels = labels || labels(direction)

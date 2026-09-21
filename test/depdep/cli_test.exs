@@ -51,6 +51,19 @@ defmodule Depdep.CLITest do
       assert {:ok, opts} = CLI.parse(["--help"])
       assert opts[:help]
     end
+
+    test "--help documents both forms of the store and of metresis (#88)" do
+      {text, 0} =
+        System.cmd(
+          "elixir",
+          ["-pa", Application.app_dir(:depdep, "ebin"), "-e", "Depdep.CLI.main([\"--help\"])"],
+          stderr_to_stdout: true
+        )
+
+      assert text =~ "DEPDEP_STORE=s3://ACCESS_KEY@host:port/bucket"
+      assert text =~ "DEPDEP_ENDPOINT"
+      assert text =~ "DEPDEP_METRESIS (or DEPDEP_METRESIS_URL)"
+    end
   end
 
   describe "parse/1 refuses what it does not understand" do

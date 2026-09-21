@@ -12,7 +12,7 @@ defmodule Depdep.MetresisTest do
   alias Depdep.Metrics
   alias Depdep.Metrics.{Phase, Unit}
 
-  @vars ~w(DEPDEP_METRESIS_URL DEPDEP_METRESIS_TOKEN CI_PROJECT_PATH CI_COMMIT_SHA
+  @vars ~w(DEPDEP_METRESIS DEPDEP_METRESIS_URL DEPDEP_METRESIS_TOKEN CI_PROJECT_PATH CI_COMMIT_SHA
            CI_COMMIT_REF_SLUG CI_PIPELINE_ID CI_JOB_ID CI_JOB_NAME)
 
   setup do
@@ -120,6 +120,19 @@ defmodule Depdep.MetresisTest do
       System.delete_env("DEPDEP_METRESIS_URL")
       System.put_env("DEPDEP_METRESIS_TOKEN", "t")
       assert Metresis.config() == :disabled
+    end
+
+    test "DEPDEP_METRESIS is the same instance under the shorter name; both names at once is refused" do
+      System.put_env("DEPDEP_METRESIS", "http://example/")
+      System.put_env("DEPDEP_METRESIS_TOKEN", "t")
+      assert Metresis.config() == {:ok, %{url: "http://example/api/v1/ingest", token: "t"}}
+
+      System.put_env("DEPDEP_METRESIS_URL", "http://other")
+      assert {:error, reason} = Metresis.config()
+      assert reason =~ "DEPDEP_METRESIS and DEPDEP_METRESIS_URL are both set"
+      System.delete_env("DEPDEP_METRESIS")
+      System.delete_env("DEPDEP_METRESIS_URL")
+      System.delete_env("DEPDEP_METRESIS_TOKEN")
     end
 
     test "empty reads as unset, like every other DEPDEP_ variable" do

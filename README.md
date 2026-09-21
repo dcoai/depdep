@@ -109,9 +109,19 @@ project into a slow one.
 
 ### 2. Point it at the store
 
-Four environment variables. The first two are not secret and belong with the
-rest of your build's shape; the second two are credentials and belong wherever
-your CI keeps those.
+Two environment variables. The first is the shape of the store and belongs
+with the rest of your build's configuration; the second is the credential and
+belongs wherever your CI keeps those.
+
+```
+DEPDEP_STORE=s3://depdep@10.0.0.5:9000/elixir-dep-store?region=us-east-1
+DEPDEP_SECRET_KEY=…                                    # masked
+```
+
+`s3://` is a plain-http endpoint, `s3+https://` is TLS; the userinfo is the
+access key; the path is the bucket; `region` defaults to `us-east-1`. **The
+secret is never in the URL** — one with a password is refused — because a URL
+ends up in a shell history and a masked variable does not. Or, separately:
 
 | variable | example | |
 |---|---|---|
@@ -122,10 +132,11 @@ your CI keeps those.
 | `DEPDEP_REGION` | `us-east-1` | optional, this is the default |
 | `DEPDEP_ENABLED` | `false` | optional, unset means enabled |
 | `DEPDEP_CONCURRENCY` | `1` | optional, an instrument — see below |
-| `DEPDEP_METRESIS_URL` | `http://metresis:2060` | optional, both or neither |
+| `DEPDEP_METRESIS` | `http://metresis:2060` | optional, both or neither (`DEPDEP_METRESIS_URL` also works) |
 | `DEPDEP_METRESIS_TOKEN` | `mtr_ing_…` | optional, keep it masked |
 
-**If any of them is unset, depdep says so and exits 0.** Nothing breaks; Mix
+Both forms at once is refused, not merged. **If the store is unset, depdep
+says so and exits 0.** Nothing breaks; Mix
 compiles the dependency as it always would. You can wire depdep into a pipeline
 before the credentials exist and nothing will fail.
 
