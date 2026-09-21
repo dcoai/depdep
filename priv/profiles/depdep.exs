@@ -153,6 +153,17 @@
         "The whole transfer, from the first provider to the last — what depdep itself cost the job. Excludes the Mix.install that bootstrapped it and any compile."
     },
     %{
+      "key" => "depdep.rebuilt_after_restore",
+      "name" => "Rebuilt after restore",
+      "group_name" => "Run",
+      "type" => "gauge",
+      "quantity" => "count",
+      "precision" => 0,
+      "polarity" => "higher_worse",
+      "description" =>
+        "Restored dependencies Mix would rebuild anyway, counted as misses with Mix's reason. Above zero means the key missed an input; the day it happens is the day to look."
+    },
+    %{
       "key" => "depdep.saved_total",
       "name" => "Time saved",
       "group_name" => "Run",

@@ -122,7 +122,12 @@ defmodule Depdep.Metresis do
   in seconds.
   """
   def samples(map) do
-    run = [sample("depdep.elapsed", seconds(map.elapsed_us), %{})] ++ saved_total(map)
+    run =
+      [
+        sample("depdep.elapsed", seconds(map.elapsed_us), %{}),
+        sample("depdep.rebuilt_after_restore", map.rebuilt_after_restore, %{})
+      ] ++ saved_total(map)
+
     run ++ Enum.flat_map(map.phases, &phase_samples/1)
   end
 
