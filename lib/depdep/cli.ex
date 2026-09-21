@@ -320,7 +320,8 @@ defmodule Depdep.CLI do
           "depdep: " <>
             Report.render(direction, Report.merge(Enum.map(phases, & &1.tally))) <>
             " in " <>
-            Report.duration(elapsed) <> compiled_clause(compiled) <> saved_clause(phases)
+            Report.duration(elapsed) <>
+            compiled_clause(compiled) <> saved_clause(phases) <> rebuilt_clause(phases)
         )
 
         write_metrics(opts, phases, direction, elapsed)
@@ -363,6 +364,15 @@ defmodule Depdep.CLI do
     case Metrics.saved_total_us(phases) do
       nil -> ""
       us -> " — saved ~" <> Report.duration(us)
+    end
+  end
+
+  # Only when it happened: a restore Mix would not keep is the key's failure,
+  # and a line that says `rebuilt 0` every day would teach readers to skip it.
+  defp rebuilt_clause(phases) do
+    case Depdep.RestoreCheck.count(phases) do
+      0 -> ""
+      n -> " — rebuilt #{n}"
     end
   end
 
@@ -442,7 +452,19 @@ defmodule Depdep.CLI do
 
     {transfer, settled} = Depdep.SecondPass.plan(phase.units, units)
     {span, {_tally, transferred}} = transfer_units(provider, transfer, :pull, cfg)
-    {Depdep.SecondPass.merge(phase, settled, transferred, span), units}
+    phase = Depdep.SecondPass.merge(phase, settled, transferred, span)
+
+    # Then ask Mix whether it would keep what was restored (#85). A unit it
+    # would rebuild is a miss after all, named with Mix's reason, and
+    # --compile-deps then compiles it like any other miss.
+    env = Keyword.fetch!(opts, :env)
+    {phase, rebuilt} = Depdep.RestoreCheck.apply(phase, Depdep.RestoreCheck.statuses(units, env))
+
+    Enum.each(rebuilt, fn {label, reason} ->
+      warn("#{label}: restored, but Mix would rebuild it — #{reason} — counted as a miss")
+    end)
+
+    {phase, units}
   end
 
   defp second_pass(phase, units, _opts, _cfg), do: {phase, units}

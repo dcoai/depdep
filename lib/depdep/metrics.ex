@@ -64,6 +64,7 @@ defmodule Depdep.Metrics do
       :compile_us,
       :compile_exact,
       :saved_us,
+      rebuilt: false,
       offset_us: 0,
       download_us: 0,
       restore_us: 0,
@@ -134,6 +135,7 @@ defmodule Depdep.Metrics do
       direction: direction,
       elapsed_us: elapsed_us,
       saved_total_us: saved_total_us(phases),
+      rebuilt_after_restore: Depdep.RestoreCheck.count(phases),
       phases: Enum.map(phases, &phase_map/1)
     }
   end

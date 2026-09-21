@@ -185,6 +185,7 @@ Only a series separates a real regression from a noisy afternoon.
     depdep.compile      one unit, compiled on a miss         seconds  (--compile-deps)
     depdep.saved        one unit, a hit's compile not done   seconds  (lower bound)
     depdep.saved_total  the run's hits together              seconds
+    depdep.rebuilt_after_restore  restored, but Mix would rebuild it  count
 
 Samples carry `provider`, `unit`, `bucket` and `reason` as labels, and the run
 carries the project, commit, ref, pipeline and job that GitLab already puts in
@@ -330,6 +331,14 @@ left out. And an object stored before this existed carries no compile time, so
 a hit on it reports *nothing* — not zero — until the object is next rebuilt by
 a push that measured it. A store that shows no `saved` line is one whose
 objects predate `--compile-deps`, not one that saves nothing.
+
+**And after the second pass, depdep asks Mix whether it would keep what was
+restored.** A dependency Mix would rebuild anyway — its manifest records a
+lock entry, an Elixir or OTP that is not this project's — is counted as a
+miss with Mix's own reason on the log, `--compile-deps` compiles it, and the
+summary ends `— rebuilt N`. The count posts as `depdep.rebuilt_after_restore`;
+above zero it means the key missed an input, and the day it happens is the
+day to look.
 
 **Pull *before* `mix deps.get`, not after** — which is why depdep orders them
 that way rather than leaving it to you. This is the one ordering mistake that
