@@ -139,6 +139,18 @@ defmodule Depdep.Provider.GitTest do
       assert {_, 0} = System.cmd("git", ["--git-dir", Git.mirror_path(restored), "fsck"])
     end
 
+    # #98: a bare mirror's objects are read-only too, so a monthly re-pull over
+    # the mirror that is already there has to replace it, not extract over it.
+    test "a restore over an existing mirror replaces it", ctx do
+      assert Git.collect(unit_for(ctx.source, ctx.collect_dir, :push), ctx.tmp) == :ok
+      restored = unit_for(ctx.source, ctx.restore_dir, :pull)
+      assert Git.restore(restored, ctx.tmp) == :ok
+      assert Git.present?(restored)
+
+      assert Git.restore(restored, ctx.tmp) == :ok
+      assert {_, 0} = System.cmd("git", ["--git-dir", Git.mirror_path(restored), "fsck"])
+    end
+
     # The point of the whole provider: a clone served from the mirror rather
     # than from the remote, and identical to one that was not.
     test "a restored mirror serves a --reference clone", ctx do

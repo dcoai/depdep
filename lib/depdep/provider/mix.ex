@@ -140,8 +140,8 @@ defmodule Depdep.Provider.Mix do
     do: Depdep.Archive.complete?(dir, name, build_path)
 
   @impl true
-  def restore(%Unit{context: %{project_dir: dir}}, tmp),
-    do: Depdep.Archive.extract(tmp, dir)
+  def restore(%Unit{context: %{project_dir: dir, name: name, build_path: build_path}}, tmp),
+    do: Depdep.Archive.extract(tmp, dir, Depdep.Archive.trees(name, build_path))
 
   @impl true
   def collect(%Unit{context: %{project_dir: dir, name: name, build_path: build_path}}, tmp),
