@@ -87,6 +87,34 @@ defmodule Depdep.EnvSetTest do
       refute Enum.any?(verdicts, fn {_, v} -> v == :ambiguous end)
     end
 
+    # #79: bizex's shape — a member with path dependencies and no git entry.
+    # The path dependency is declared and active and never in the lock, so
+    # the walk cannot follow it; what it cannot see must be ambiguous, never
+    # inactive. 133 objects were `not for this env` for this.
+    test "a path dependency makes the walk incomplete: its closure is ambiguous, never inactive" do
+      # jason is declared; `tenancy` is a path dep whose own lock brought in
+      # ex_doc's chain (standing in for ash_authentication and friends).
+      verdicts = EnvSet.classify(["jason", "tenancy"], lock(), %{})
+
+      assert verdicts["jason"] == :active
+      assert verdicts["ex_doc"] == :ambiguous
+      assert verdicts["nimble_parsec"] == :ambiguous
+      refute Enum.any?(verdicts, fn {_, v} -> v == :inactive end)
+
+      # The graph does not change that: the path dependency is not a lock
+      # entry, so its edges are not the lock's. Option 1 of #79 — reading the
+      # path dependency's own lock — arrives with #89 by construction.
+      graph = %{"app" => ["jason", "tenancy"], "tenancy" => ["ex_doc"], "ex_doc" => []}
+      assert EnvSet.classify(["jason", "tenancy"], lock(), graph)["ex_doc"] == :ambiguous
+    end
+
+    test "roots/2 says which declared names the walk cannot start from" do
+      assert EnvSet.roots(["jason", "tenancy", "other"], lock()) ==
+               {["jason"], ["tenancy", "other"]}
+
+      assert EnvSet.roots(["jason"], lock()) == {["jason"], []}
+    end
+
     test "the graph resolves the ambiguity exactly" do
       lock = Map.put(lock(), "forked", git(:forked))
       graph = %{"forked" => ["earmark_parser"]}

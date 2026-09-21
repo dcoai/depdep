@@ -43,9 +43,65 @@ defmodule Depdep.Provider.MixTest do
     }
   end
 
+  # #79, the consumer shape: `{:sibling, path: "../sibling"}` declared in a
+  # real mix.exs, `sibling` having locked a hex package the member does not
+  # declare. Through `keys_for/3` and `enumerate/1`, as a run would.
+  describe "a member with a path dependency" do
+    setup ctx do
+      member = Path.join(ctx.root, "member")
+      sibling = Path.join(ctx.root, "sibling")
+      File.mkdir_p!(member)
+      File.mkdir_p!(sibling)
+
+      File.write!(
+        Path.join(sibling, "mix.exs"),
+        "defmodule Sib#{System.unique_integer([:positive])}.MixProject do\n  use Mix.Project\n  def project, do: [app: :sibling, version: \"0.1.0\"]\nend\n"
+      )
+
+      File.write!(Path.join(member, "mix.exs"), """
+      defmodule Member#{System.unique_integer([:positive])}.MixProject do
+        use Mix.Project
+        def project, do: [app: :member, version: "0.1.0", deps: deps()]
+        defp deps, do: [{:jason, "~> 1.4"}, {:sibling, path: "../sibling"}]
+      end
+      """)
+
+      # sibling's closure is in the member's lock (Mix resolves it there), but
+      # nothing in the member declares decimal directly.
+      File.write!(Path.join(member, "mix.lock"), """
+      %{
+        "decimal": {:hex, :decimal, "2.1.1", "innerdec", [:mix], [], "hexpm", "outerdec"},
+        "jason": {:hex, :jason, "1.4.4", "innerjason", [:mix], [], "hexpm", "outerjason"}
+      }
+      """)
+
+      :ok
+    end
+
+    test "the closure is ambiguous and requested, and the warning names the path dependency",
+         ctx do
+      {:ok, keys, _lock, verdicts, unlocked} = Depdep.keys_for(ctx.root, "member", :test)
+
+      assert unlocked == ["sibling"]
+      assert verdicts["jason"] == :active
+      assert verdicts["decimal"] == :ambiguous
+      assert {:key, _} = keys["decimal"]
+
+      {:ok, units, warnings} =
+        Provider.Mix.enumerate(root: ctx.root, env: :test, project: "member")
+
+      assert Enum.find(units, &(&1.name == "decimal")).resolution |> elem(0) == :key
+
+      assert warnings == [
+               "member: 1 dependencies may be outside MIX_ENV=test but are requested " <>
+                 "anyway — sibling is a path dependency whose closure is not in the lock"
+             ]
+    end
+  end
+
   describe "enumerate/1 produces exactly what the pre-seam path produced" do
     test "every object path matches Depdep.Key.object/3 computed directly", ctx do
-      {:ok, keys, lock, _verdicts} = Depdep.keys_for(ctx.root, "app", :test)
+      {:ok, keys, lock, _verdicts, _unlocked} = Depdep.keys_for(ctx.root, "app", :test)
 
       for {name, {:key, hash}} <- keys do
         expected = Depdep.Key.object(name, Map.fetch!(lock, name), hash)
@@ -54,7 +110,7 @@ defmodule Depdep.Provider.MixTest do
     end
 
     test "the keys themselves are unchanged", ctx do
-      {:ok, keys, _lock, _verdicts} = Depdep.keys_for(ctx.root, "app", :test)
+      {:ok, keys, _lock, _verdicts, _unlocked} = Depdep.keys_for(ctx.root, "app", :test)
 
       for {name, resolution} <- keys do
         assert ctx.by_name[name].resolution == resolution

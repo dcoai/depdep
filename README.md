@@ -490,6 +490,10 @@ a bug worth reporting.
 
   One honest limit: before `mix deps.get`, a git dependency's own dependencies
   are unknown, so a lock entry the walk did not reach *might* be one of them.
+  A path dependency has the same effect for a different reason — its closure
+  is never in the lock — so a member with path dependencies requests its
+  unreached entries rather than excluding them, and the warning names the
+  path dependency.
   Rather than guess, depdep requests those as it always did and says so once —
   `N dependencies may be outside MIX_ENV=test but are requested anyway`. A pull
   after `deps.get` has the graph and decides exactly.
