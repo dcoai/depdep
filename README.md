@@ -240,7 +240,7 @@ Depdep.CLI.main(System.argv())
 `Mix.install/2` fetches into its own cache, independent of your project's
 `deps/`, so there is no ordering problem and no root Mix project required.
 
-**Until depdep is on hex.pm — and as of v0.5.0 it is not; publishing is a
+**Until depdep is on hex.pm — and as of v0.6.0 it is not; publishing is a
 separate decision from tagging — install it from git instead.** The git form
 also stays the way to run a commit that has no release yet:
 
@@ -254,7 +254,7 @@ url =
     token -> "https://gitlab-ci-token:#{token}@gitlab.example.com/group/depdep.git"
   end
 
-Mix.install([{:depdep, git: url, tag: "v0.5.0"}])
+Mix.install([{:depdep, git: url, tag: "v0.6.0"}])
 
 Depdep.CLI.main(System.argv())
 ```
