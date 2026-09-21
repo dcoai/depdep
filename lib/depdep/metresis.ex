@@ -51,7 +51,7 @@ defmodule Depdep.Metresis do
   @doc """
   `{:ok, config}` when both variables are set, `:disabled` otherwise.
 
-  Empty reads as unset, as `Depdep.S3.env/1` and `Depdep.CLI.enabled?/0` do.
+  Empty reads as unset, as the store's variables and `Depdep.CLI.enabled?/0` do.
   """
   def config do
     with {:ok, url} <- env("DEPDEP_METRESIS_URL"),

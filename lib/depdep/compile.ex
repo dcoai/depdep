@@ -36,7 +36,7 @@ defmodule Depdep.Compile do
   ## What is recorded, and where
 
   Each measured unit's microseconds go to `<build_path>/.depdep/<name>.compile`,
-  beside the key note `Depdep.Provider.Mix.record/1` writes — so a later
+  beside the key note the mix provider (`Depdep.Provider.Mix`) writes — so a later
   `--push` finds the number without being told a path, and it lives under
   `_build` where everything that cleans a build cleans it too.
   """

@@ -85,7 +85,11 @@ defmodule Depdep.MixProject do
       "--source-url",
       @source_url,
       "--source-ref",
-      "v#{@version}"
+      "v#{@version}",
+      # A docstring naming a function that does not exist, or is private, is
+      # a dead link on hexdocs. Two shipped that way before docs were built
+      # at all (#78); a warning that fails the build cannot.
+      "--warnings-as-errors"
     ]
 
     case System.cmd(escript, args, into: IO.stream()) do
