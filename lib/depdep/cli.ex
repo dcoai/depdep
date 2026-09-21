@@ -825,18 +825,21 @@ defmodule Depdep.CLI do
       --git-mirror-dir DIR where mirrors are kept (default .depdep/git)
       --metrics PATH  write this run's timings to PATH as JSON
 
-    Reads DEPDEP_ENDPOINT, DEPDEP_BUCKET, DEPDEP_ACCESS_KEY, DEPDEP_SECRET_KEY
-    and optionally DEPDEP_REGION. With any of them unset, --pull and --push
-    report why and do nothing.
+    Reads the store from DEPDEP_STORE=s3://ACCESS_KEY@host:port/bucket[?region=…]
+    and DEPDEP_SECRET_KEY (s3 is a plain-http endpoint, s3+https is TLS; the
+    secret is never in the URL) — or, separately, DEPDEP_ENDPOINT,
+    DEPDEP_BUCKET, DEPDEP_ACCESS_KEY, DEPDEP_SECRET_KEY and optionally
+    DEPDEP_REGION. Both forms at once is refused. With the store unset, --pull
+    and --push report why and do nothing.
 
     DEPDEP_ENABLED=false turns depdep off: it reports that it is off and exits
     0 without reading anything. Unset means enabled, so leaving it alone is the
     same as never having heard of it.
 
-    DEPDEP_METRESIS_URL and DEPDEP_METRESIS_TOKEN, both set, post this run's
-    timings to a metresis instance. With either unset nothing is sent and no
-    connection is attempted. A metresis that refuses, fails or hangs is a
-    warning and never a failed run.
+    DEPDEP_METRESIS (or DEPDEP_METRESIS_URL) and DEPDEP_METRESIS_TOKEN, both
+    set, post this run's timings to a metresis instance. With either unset
+    nothing is sent and no connection is attempted. A metresis that refuses,
+    fails or hangs is a warning and never a failed run.
 
     DEPDEP_CONCURRENCY sets how many transfers run at once, for taking a
     measurement rather than for tuning: =1 is the serial baseline. Unset means

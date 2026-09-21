@@ -4,6 +4,28 @@ What changed for a user of depdep, per release. Each version is a git tag;
 the four earliest also carry GitLab release notes, from which these entries
 are condensed. Issue numbers are dco-tek/depdep's.
 
+## Unreleased
+
+- **`DEPDEP_STORE`**: one URL for the shape of the store —
+  `s3://ACCESS_KEY@host:port/bucket?region=…` (`s3+https` for TLS) — beside
+  `DEPDEP_SECRET_KEY`, which stays its own variable; a URL carrying a
+  password is refused. The four separate variables keep working; both forms
+  at once is refused. `DEPDEP_METRESIS` likewise beside
+  `DEPDEP_METRESIS_URL`. (#88)
+- **A restored dependency Mix would rebuild is a miss**, named with Mix's
+  reason, and `--compile-deps` compiles it — `— rebuilt N` on the summary,
+  `depdep.rebuilt_after_restore` posted. (#91, from uficap's #85)
+- **A restore replaces the trees it carries.** A git dependency restored
+  after `deps.get` failed with `:eacces` on git's read-only objects and was
+  built from source on every consumer. (#99)
+- **`--push --provider apt` no longer crashes** on the first `.deb` the
+  store has not seen. (#90)
+- **A path dependency makes the env walk incomplete**: its closure is
+  requested rather than reported `not for this env` — bizex's 133 objects.
+  (#92, from #79)
+- `--compile-deps` holds an ambiguous unit on the no-store path too (#84);
+  `mix docs` fails on a dead docstring reference (#82).
+
 ## v0.5.0 — 2026-09-20
 
 A publishable package, and the leaf-git fix consumers are waiting on. Two new
