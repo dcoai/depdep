@@ -58,7 +58,8 @@ dependencies. A cache layer has to re-establish that invariant for itself:
 ```
 key(dep) = sha256(
   schema_version,                       # v3
-  elixir, otp, mix_env,                 # the toolchain
+  elixir, otp, erts, arch, mix_env,     # the toolchain, and the compiler environment
+  [os_release, cc],                     # only for a dependency with a native build
   name, version, inner_checksum,        # the dep's own source: the lock entry
   build_tools,                          # mix / rebar3 / make, from the lock
   env, compile, system_env,             # the declaration's build options, from Mix
@@ -76,6 +77,11 @@ converge `mix deps` runs, asked inside your project — not from a parsed
 lockfile, a parsed `mix deps.tree`, or a hand-written walk of the `only:`
 rule, which is how depdep did it through v0.5 and where every defect it
 shipped lived. Nothing is re-derived; the key is enumerable.
+
+A dependency with a native build — one whose lock entry names `elixir_make`,
+`rustler`, `zigler`, `cc_precompiler` or a `make` build — additionally keys
+on the OS release and the C compiler, since that is what its bytes depend on;
+a pure-Elixir dependency does not rekey when the image's `gcc` moves.
 
 Compile-time configuration is in the key for the same reason: `Application.compile_env/2`
 and module-level attributes bake values into bytecode, so two members that

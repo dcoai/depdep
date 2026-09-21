@@ -231,6 +231,86 @@ defmodule Depdep.KeyTest do
     end
   end
 
+  # v3 (#89, #95): a NIF's bytes depend on the architecture and ERTS they load
+  # into, and on the OS and C compiler that built them. Every NIF object in the
+  # store was x86-64 bytes with nothing in its key to say so.
+  describe "the toolchain fingerprint" do
+    defp with_base(part), do: %{toolchain() | base: [part | toolchain().base]}
+    defp with_native(part), do: %{toolchain() | native: [part | toolchain().native]}
+
+    defp key_under(lock, name, toolchain) do
+      {:ok, keys} = Depdep.Key.compute(Depdep.Deps.from_lock(Map.new(lock)), %{}, toolchain)
+      keys[name]
+    end
+
+    test "the host's toolchain names arch, ERTS and the compiler environment" do
+      %{base: base, native: native} = Depdep.Key.toolchain(:test)
+
+      for prefix <-
+            ~w(elixir= otp= erts= arch= env=test erl_compiler_options= elixir_erl_options= mix_target=) do
+        assert Enum.any?(base, &String.starts_with?(&1, prefix)), "base lacks #{prefix}"
+      end
+
+      for prefix <- ~w(os= cc=), do: assert(Enum.any?(native, &String.starts_with?(&1, prefix)))
+    end
+
+    test "a change in the base toolchain changes every key" do
+      lock = [hex("jason", "1.4.4", [])]
+
+      refute key_under(lock, "jason", with_base("arch=aarch64-apple-darwin")) ==
+               key_under(lock, "jason", toolchain())
+    end
+
+    test "the native fingerprint reaches a dependency with a native build, and only that one" do
+      lock = [
+        hex("bcrypt_elixir", "3.1.0", ["elixir_make"]),
+        hex("elixir_make", "0.8.4", []),
+        hex("jason", "1.4.4", [])
+      ]
+
+      moved = with_native("cc=clang 17")
+
+      refute key_under(lock, "bcrypt_elixir", moved) ==
+               key_under(lock, "bcrypt_elixir", toolchain())
+
+      assert key_under(lock, "jason", moved) == key_under(lock, "jason", toolchain())
+    end
+
+    test "a dependent of a native dependency moves with it, through the recursion" do
+      lock = [
+        hex("app", "1.0.0", ["bcrypt_elixir"]),
+        hex("bcrypt_elixir", "3.1.0", ["elixir_make"]),
+        hex("elixir_make", "0.8.4", [])
+      ]
+
+      refute key_under(lock, "app", with_native("os=debian-trixie")) ==
+               key_under(lock, "app", toolchain())
+    end
+
+    test "native?/1 reads the lock entry: a native build tool among the children, or make" do
+      deps =
+        Depdep.Deps.from_lock(
+          Map.new([
+            hex("bcrypt_elixir", "3.1.0", ["elixir_make"]),
+            hex("explorer", "0.10.0", ["rustler_precompiled", {"rustler", true}]),
+            hex("ghostty", "0.1.0", ["zigler_precompiled"]),
+            hex("jason", "1.4.4", []),
+            git("forked")
+          ])
+        )
+
+      assert Depdep.Key.native?(deps["bcrypt_elixir"])
+      assert Depdep.Key.native?(deps["explorer"])
+      assert Depdep.Key.native?(deps["ghostty"])
+      refute Depdep.Key.native?(deps["jason"])
+      refute Depdep.Key.native?(deps["forked"]), "unknown children are not evidence either way"
+
+      {name, {:hex, app, v, i, _tools, d, r, o}} = hex("ranch", "2.1.0", [])
+      make = Depdep.Deps.from_lock(%{name => {:hex, app, v, i, [:make, :rebar3], d, r, o}})
+      assert Depdep.Key.native?(make["ranch"])
+    end
+  end
+
   describe "the schema" do
     test "is v3" do
       assert Depdep.Key.object("ash", elem(hex("ash", "3.32.3", []), 1), "h") =~ ~r"^v3/"

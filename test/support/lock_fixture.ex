@@ -26,7 +26,14 @@ defmodule Depdep.LockFixture do
   end
 
   @doc "The toolchain is held fixed so a rule cannot pass or fail because of the host."
-  def toolchain, do: ["elixir=1.20.4", "otp=29", "env=test"]
+  def toolchain do
+    %{
+      base:
+        ~w(elixir=1.20.4 otp=29 erts=17.0.5 arch=x86_64-pc-linux-gnu env=test) ++
+          ["erl_compiler_options=", "elixir_erl_options=", "mix_target="],
+      native: ["os=debian-bookworm", "cc=cc (Debian 14.2.0-19) 14.2.0"]
+    }
+  end
 
   def keys(lock, config \\ %{}) do
     {:ok, keys} = Depdep.Key.compute(Depdep.Deps.from_lock(Map.new(lock)), config, toolchain())
