@@ -41,7 +41,11 @@ defmodule Depdep do
   """
 
   @doc """
-  Project -> `{:ok, keys, lock, verdicts}` or `{:error, reason}`.
+  Project -> `{:ok, keys, lock, verdicts, unlocked}` or `{:error, reason}`.
+
+  `unlocked` names the declared dependencies the env walk could not start
+  from — path dependencies, whose closure is not in the lock (#79) — so the
+  provider can say why the verdicts are ambiguous.
 
   `keys` is `%{name => {:key, hash} | {:skip, reason}}` for every entry in the
   lock, exactly as before. `verdicts` is `Depdep.EnvSet.classify/3`'s answer for
@@ -56,8 +60,10 @@ defmodule Depdep do
          config = Depdep.Config.read(project_dir, env, root),
          graph = graph_for(project_dir, env, lock),
          {:ok, keys} <- Depdep.Key.compute(lock, config, Depdep.Key.toolchain(env), graph) do
-      verdicts = Depdep.EnvSet.classify(Depdep.EnvSet.declared(project_dir, env), lock, graph)
-      {:ok, keys, lock, verdicts}
+      direct = Depdep.EnvSet.declared(project_dir, env)
+      verdicts = Depdep.EnvSet.classify(direct, lock, graph)
+      unlocked = if direct == :unknown, do: [], else: elem(Depdep.EnvSet.roots(direct, lock), 1)
+      {:ok, keys, lock, verdicts, unlocked}
     else
       {:error, {:cycle, name}} -> {:error, "dependency cycle through #{name}"}
       {:error, reason} -> {:error, reason}

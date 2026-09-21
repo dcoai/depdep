@@ -78,8 +78,8 @@ defmodule Depdep.EnvSet do
   def classify(:unknown, lock, _graph), do: Map.new(lock, fn {name, _} -> {name, :active} end)
 
   def classify(direct, lock, graph) do
-    roots = Enum.filter(direct, &Map.has_key?(lock, &1))
-    {reached, complete?} = walk(roots, lock, graph, MapSet.new(), true)
+    {roots, unlocked} = roots(direct, lock)
+    {reached, complete?} = walk(roots, lock, graph, MapSet.new(), unlocked == [])
 
     Map.new(lock, fn {name, _entry} ->
       cond do
@@ -89,6 +89,22 @@ defmodule Depdep.EnvSet do
       end
     end)
   end
+
+  @doc """
+  The declared dependencies the walk can start from, and the ones it cannot:
+  `{roots, unlocked}`.
+
+  A path dependency is declared, active, and never in `mix.lock` — its source
+  is a directory, not a fetch. The walk can only follow the lock's edges, so
+  it cannot reach anything through it; but the closure exists (a poncho is
+  path dependencies all the way down) and calling it inactive was the silent
+  wrong answer this module's own doc warns about: bizex's four members with
+  path dependencies and no git entry reported 133 objects as *not for this
+  env* on every run (#79). **Roots may not silently shrink.** A declared name
+  absent from the lock makes the walk incomplete, exactly as an unknown git
+  child list does, and is returned so the warning can name it.
+  """
+  def roots(direct, lock), do: Enum.split_with(direct, &Map.has_key?(lock, &1))
 
   # Non-optional edges only. An optional child is Mix's to include only when
   # something reaches it non-optionally — and then that edge reaches it here.

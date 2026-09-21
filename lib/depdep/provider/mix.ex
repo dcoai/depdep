@@ -29,11 +29,11 @@ defmodule Depdep.Provider.Mix do
     projects
     |> Enum.reduce({[], notes}, fn project, {units, warnings} ->
       case Depdep.keys_for(root, project, env) do
-        {:ok, keys, lock, verdicts} ->
+        {:ok, keys, lock, verdicts, unlocked} ->
           case Depdep.BuildPath.for_project(Path.join(root, project), env) do
             {:ok, build_path} ->
               {units ++ units_for(root, project, env, keys, lock, verdicts, direction, build_path),
-               warnings ++ ambiguity(project, env, verdicts)}
+               warnings ++ ambiguity(project, env, verdicts, unlocked)}
 
             {:error, reason} ->
               {units, warnings ++ ["#{project}: #{reason} — skipping it"]}
@@ -46,19 +46,33 @@ defmodule Depdep.Provider.Mix do
     |> then(fn {units, warnings} -> {:ok, units, warnings} end)
   end
 
-  # Before `deps.get`, a git dependency's children are unknown, so a lock entry
-  # the env walk did not reach may be one of them. Those are keyed and requested
-  # as they always were — the fail-safe direction — and said once per member,
-  # because the reader of `missing N` should know which part of it is this.
-  defp ambiguity(project, env, verdicts) do
+  # A lock entry the env walk did not reach may be a child of something the
+  # walk could not see through: a git dependency's children before `deps.get`,
+  # or a path dependency's closure, which is never in the lock (#79). Those
+  # are keyed and requested as they always were — the fail-safe direction —
+  # and said once per member, naming the cause, because the reader of
+  # `missing N` should know which part of it is this.
+  defp ambiguity(project, env, verdicts, unlocked) do
     case Enum.count(verdicts, fn {_, verdict} -> verdict == :ambiguous end) do
       0 ->
         []
 
       n ->
+        cause =
+          case unlocked do
+            [] ->
+              "a git dependency's own dependencies are unknown before deps.get"
+
+            [one] ->
+              "#{one} is a path dependency whose closure is not in the lock"
+
+            many ->
+              "#{Enum.join(many, ", ")} are path dependencies whose closures are not in the lock"
+          end
+
         [
           "#{project}: #{n} dependencies may be outside MIX_ENV=#{env} but are requested " <>
-            "anyway — a git dependency's own dependencies are unknown before deps.get"
+            "anyway — " <> cause
         ]
     end
   end
