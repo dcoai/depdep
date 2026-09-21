@@ -89,9 +89,22 @@ defmodule Depdep.Archive do
     Enum.filter(paths, fn path -> File.dir?(path) and File.ls!(path) == [] end)
   end
 
-  @doc "Extracts into the project directory, recreating both trees beneath it."
-  def extract(source, project_dir) do
+  @doc """
+  Extracts into the project directory, recreating the trees beneath it.
+
+  **A restore replaces the trees it carries; it never extracts over what is
+  there.** `trees` — `trees/2`'s answer, the same list `create/4` archived —
+  are removed first. Two reasons, one of them a defect this used to have:
+  git writes `.git/objects/*` read-only, and a git dependency is only ever
+  restored after `mix deps.get` has cloned it, so extracting over the
+  checkout answered `{:error, :eacces}` on every consumer and the unit was
+  built from source as if the store had missed (#98). And leftovers from an
+  earlier build under the same path are not part of the object; a restore
+  that keeps them is the object plus something nobody asked for.
+  """
+  def extract(source, project_dir, trees) do
     File.mkdir_p!(project_dir)
+    Enum.each(trees, &File.rm_rf!(Path.join(project_dir, &1)))
 
     case :erl_tar.extract(String.to_charlist(source), [
            :compressed,

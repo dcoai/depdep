@@ -113,9 +113,9 @@ defmodule Depdep.Provider.Git do
   end
 
   @impl true
-  def restore(%Unit{context: %{dir: dir}}, tmp) do
+  def restore(%Unit{context: %{dir: dir, slug: slug}}, tmp) do
     File.mkdir_p!(dir)
-    Depdep.Archive.extract(tmp, dir)
+    Depdep.Archive.extract(tmp, dir, ["#{slug}.git"])
   end
 
   # Nothing to note, for the reason the whole provider is built on: a stale

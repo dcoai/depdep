@@ -25,6 +25,37 @@ defmodule Depdep.ArchiveTest do
     assert Depdep.Archive.complete?(dir, "ash", "_build/test")
   end
 
+  # #98: a git dependency is only restored after `mix deps.get` has cloned it,
+  # and git writes its objects read-only. Extracting over them was :eacces on
+  # every consumer; a restore replaces the trees it carries.
+  test "a restore replaces existing trees, read-only files and leftovers included" do
+    source = tmp_dir()
+    File.mkdir_p!(Path.join(source, "deps/forked/.git/objects/ab"))
+    File.mkdir_p!(Path.join(source, "_build/test/lib/forked/ebin"))
+    File.write!(Path.join(source, "deps/forked/.git/objects/ab/cdef"), "archived object")
+    File.write!(Path.join(source, "_build/test/lib/forked/ebin/Elixir.Forked.beam"), "beam")
+    tar = Path.join(System.tmp_dir!(), "depdep-test-#{unique()}.tar.gz")
+    assert :ok = Depdep.Archive.create(source, "forked", "_build/test", tar)
+
+    # The checkout deps.get just made: the same object, read-only, plus a
+    # leftover from an earlier build that is not in the archive.
+    dest = tmp_dir()
+    File.mkdir_p!(Path.join(dest, "deps/forked/.git/objects/ab"))
+    File.mkdir_p!(Path.join(dest, "_build/test/lib/forked/ebin"))
+    existing = Path.join(dest, "deps/forked/.git/objects/ab/cdef")
+    File.write!(existing, "fetched object")
+    File.chmod!(existing, 0o444)
+    leftover = Path.join(dest, "_build/test/lib/forked/ebin/Elixir.Old.beam")
+    File.write!(leftover, "stale")
+
+    assert :ok = Depdep.Archive.extract(tar, dest, Depdep.Archive.trees("forked", "_build/test"))
+    File.rm(tar)
+
+    assert File.read!(existing) == "archived object"
+    refute File.exists?(leftover)
+    assert File.read!(Path.join(dest, "_build/test/lib/forked/ebin/Elixir.Forked.beam")) == "beam"
+  end
+
   test "a round trip through an archive restores both trees" do
     source = tmp_dir()
     File.mkdir_p!(Path.join(source, "deps/ash/lib"))
@@ -36,7 +67,7 @@ defmodule Depdep.ArchiveTest do
     assert :ok = Depdep.Archive.create(source, "ash", "_build/test", tar)
 
     dest = tmp_dir()
-    assert :ok = Depdep.Archive.extract(tar, dest)
+    assert :ok = Depdep.Archive.extract(tar, dest, Depdep.Archive.trees("ash", "_build/test"))
     File.rm(tar)
 
     assert Depdep.Archive.complete?(dest, "ash", "_build/test")
@@ -108,7 +139,8 @@ defmodule Depdep.ArchiveTest do
       File.touch!(ctx.source_file)
       assert mtime(ctx.source_file) > mtime(ctx.manifest)
 
-      assert Depdep.Archive.extract(tmp, ctx.dir) == :ok
+      assert Depdep.Archive.extract(tmp, ctx.dir, Depdep.Archive.trees("forked", "_build/test")) ==
+               :ok
 
       assert mtime(ctx.source_file) < mtime(ctx.manifest),
              "restoring both trees must put the build back ahead of its source"
