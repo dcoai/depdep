@@ -809,15 +809,18 @@ pipelines a pull costs 1.3–1.6 s for 44 Debian packages and 3.2–4.2 s for
 ~50 compiled dependencies, over the network. A restored git mirror measured
 2.43 s cold against 0.57 s on a 7.4 MB repository.
 
-**Not yet verified, and worth knowing before relying on it.** Each mechanism
-below is tested; the pipeline-level confirmation is what is missing.
+**Measured, and worth knowing before relying on it.** Each mechanism below is
+tested; the first is now measured in a pipeline, the other two are not.
 
-- **The concurrency speedup is a synthetic figure.** 200 objects, 4.40 s to
-  0.16 s, against a local socket with injected latency — an upper bound, not a
-  prediction. `DEPDEP_CONCURRENCY=1` exists so the real comparison is two
-  pipelines on one commit; it has not been run, and job-duration noise on a
-  busy runner is 20–40× depdep's whole cost, so it needs interleaved repeats
-  and a narrow timing window rather than one before/after pair.
+- **Concurrency is not where the time is.** Measured on extc (34 objects,
+  ~1 MiB average, MinIO on the LAN; eight pipelines, serial and derived
+  alternating, one at a time): the whole pull line took a median **9.5 s
+  serial against 8.9 s concurrent** — about a second, 1.1×, direction
+  consistent and magnitude inside the spread. The synthetic 26.9× quoted
+  earlier was an upper bound on overlap against injected latency and is not
+  what a consumer sees; at this scale the transfer is a small share of the
+  pull. `DEPDEP_CONCURRENCY=1` stays as the instrument for anyone with a
+  larger store or a slower link.
 - **Nothing has watched `apt-get install` consume a restored `.deb`.** A root
   job restores every file apt said it would fetch (`missing 0`) and the install
   succeeds, but it runs `apt-get install -qq`, which hides the fetch lines that
