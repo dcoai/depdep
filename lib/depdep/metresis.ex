@@ -196,11 +196,21 @@ defmodule Depdep.Metresis do
       sample("depdep.download", seconds(unit.download_us), labels),
       sample("depdep.extract", seconds(unit.restore_us), labels),
       sample("depdep.bytes", unit.bytes, labels)
-    ] ++ compile_sample(unit, labels) ++ saved_sample(unit, labels)
+    ] ++
+      compile_sample(unit, labels) ++ saved_sample(unit, labels) ++ carried_sample(unit, labels)
   end
 
   defp saved_sample(%{saved_us: nil}, _labels), do: []
   defp saved_sample(unit, labels), do: [sample("depdep.saved", seconds(unit.saved_us), labels)]
+
+  # What the object says the dependency cost to compile, unclamped — the
+  # estimate a hit avoided, and the only form of it that can be summed or
+  # ranked per unit. `saved` is this less the transfer and floored at zero,
+  # which makes it a saving rather than an addend (#101).
+  defp carried_sample(%{compile_carried_us: nil}, _labels), do: []
+
+  defp carried_sample(unit, labels),
+    do: [sample("depdep.compile_carried", seconds(unit.compile_carried_us), labels)]
 
   # Only a unit that was actually compiled carries the number; "absence is not
   # zero" again. The measurement's kind rides along as a label so a dashboard

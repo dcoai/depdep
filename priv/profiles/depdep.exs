@@ -286,6 +286,18 @@
       "polarity" => "higher_better",
       "description" =>
         "What one hit saved: the compile it did not do, less its download and extraction. Absent when the object carried no compile time."
+    },
+    %{
+      "key" => "depdep.compile_carried",
+      "name" => "Compile carried",
+      "group_name" => "Unit",
+      "type" => "gauge",
+      "quantity" => "duration",
+      "unit" => "s",
+      "precision" => 2,
+      "polarity" => "neutral",
+      "description" =>
+        "What the stored object says this dependency cost to compile when it was built. The estimate a hit avoided, unclamped — `depdep.saved` is this less the transfer and floored at zero, which makes it a saving rather than an addend. Absent when the object predates --compile-deps."
     }
   ],
   "dashboards" => [
@@ -376,6 +388,63 @@
               "metrics" => ["depdep.parallelism", "depdep.concurrency"],
               "aggregation" => "mean",
               "group_by" => ["provider"]
+            }
+          },
+          # Estimated against actual: the bottom band is what the run cost,
+          # the top is the compile it did not do. Both are durations in
+          # seconds, so they share an axis and the stack is a real sum.
+          %{
+            "title" => "Estimated vs actual — the run",
+            "viz" => "stacked_area",
+            "x" => 0,
+            "y" => 12,
+            "w" => 6,
+            "h" => 4,
+            "query" => %{
+              "v" => 1,
+              "metrics" => ["depdep.elapsed", "depdep.saved_total"],
+              "aggregation" => "mean",
+              "filters" => [%{"key" => "direction", "op" => "=", "value" => "pull"}]
+            }
+          },
+          # NOT "estimated vs actual": the compile never happened, so the top
+          # band is hypothetical rather than time this pipeline spent. Named
+          # for what it is (#101's evaluation).
+          %{
+            "title" => "Restored: transfer against the compile avoided",
+            "viz" => "stacked_bar",
+            "x" => 6,
+            "y" => 12,
+            "w" => 6,
+            "h" => 4,
+            "query" => %{
+              "v" => 1,
+              "metrics" => ["depdep.download", "depdep.extract", "depdep.compile_carried"],
+              "aggregation" => "mean",
+              "filters" => [
+                %{"key" => "direction", "op" => "=", "value" => "pull"},
+                %{"key" => "bucket", "op" => "in", "value" => ["pulled", "present"]}
+              ]
+            }
+          },
+          # Which dependencies the store is earning its keep on.
+          %{
+            "title" => "By module: what compiling would cost, against what restoring did",
+            "viz" => "table",
+            "x" => 0,
+            "y" => 16,
+            "w" => 12,
+            "h" => 4,
+            "query" => %{
+              "v" => 1,
+              "metrics" => ["depdep.compile_carried", "depdep.download", "depdep.extract"],
+              "aggregation" => "mean",
+              "group_by" => ["unit"],
+              "limit" => 20,
+              "filters" => [
+                %{"key" => "direction", "op" => "=", "value" => "pull"},
+                %{"key" => "bucket", "op" => "in", "value" => ["pulled", "present"]}
+              ]
             }
           }
         ]

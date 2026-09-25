@@ -93,6 +93,11 @@ defmodule Depdep.CLISavedIntegrationTest do
     assert unit["compile_us"] == nil, "a restored unit was not compiled here"
     assert metrics(cold)["saved_total_us"] == unit["saved_us"]
 
+    # #101: the object's own number, before the transfer is subtracted — so a
+    # pulled unit carries both, and the carried one is the larger.
+    assert unit["compile_carried_us"] == 2_500_000
+    assert unit["compile_carried_us"] >= unit["saved_us"]
+
     # The push's offer (HEAD, then PUT), then the pull's GET and the one HEAD
     # that reads the compile time back — for the one unit that was fetched.
     methods =
@@ -109,6 +114,10 @@ defmodule Depdep.CLISavedIntegrationTest do
     assert out =~ "already present 1"
     assert out =~ "saved ~2.5s"
     assert only_unit(cold)["saved_us"] == 2_500_000
+
+    # A present unit reads the note beside the build, so it carries the same
+    # number with no request at all.
+    assert only_unit(cold)["compile_carried_us"] == 2_500_000
 
     after_ = ctx.store |> FakeStore.requests() |> Enum.drop(before)
 
