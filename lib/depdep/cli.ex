@@ -555,8 +555,9 @@ defmodule Depdep.CLI do
       # A unit already on disk saved its whole compile, if it knows how long
       # that was: the note a --compile-deps or an earlier pull left beside it.
       {:done, :present} ->
-        saved = Depdep.Compile.saved_us(known_compile(unit), 0)
-        {:present, %{base | bucket: :present, saved_us: saved}}
+        carried = known_compile(unit)
+        saved = Depdep.Compile.saved_us(carried, 0)
+        {:present, %{base | bucket: :present, saved_us: saved, compile_carried_us: carried}}
 
       {:done, bucket} ->
         {bucket, %{base | bucket: bucket}}
@@ -594,7 +595,8 @@ defmodule Depdep.CLI do
         record(provider, unit)
         compile_us = carried_compile(cfg, unit)
         saved = Depdep.Compile.saved_us(compile_us, download_us + restore_us)
-        {:pulled, %{measured | bucket: :pulled, saved_us: saved}}
+
+        {:pulled, %{measured | bucket: :pulled, saved_us: saved, compile_carried_us: compile_us}}
 
       {:error, "not found"} ->
         {:missing, %{measured | bucket: :missing, reason: "not found"}}

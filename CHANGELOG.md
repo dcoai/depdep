@@ -6,6 +6,14 @@ are condensed. Issue numbers are dco-tek/depdep's.
 
 ## Unreleased
 
+- **`depdep.compile_carried`**: what the stored object says a dependency cost
+  to compile, posted for every hit that carries one. `depdep.saved` is that
+  number less the transfer and floored at zero, which makes it a saving
+  rather than an addend — a panel that stacks transfer with `saved` reports
+  the estimate as transfer whenever the clamp bites. Three dashboard panels
+  read it: the run's estimated-vs-actual, the per-module transfer against the
+  compile avoided, and a table of which dependencies the store earns its keep
+  on. (#102, from #101)
 - **The metresis profile travels with the data.** Every ingest post carries
   `Metresis-Profile: depdep sha256:<hash>`; an instance that lacks the hash
   answers `428 profile_missing`, depdep publishes the document with the same

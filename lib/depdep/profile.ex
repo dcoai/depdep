@@ -116,7 +116,8 @@ defmodule Depdep.Profile do
           bytes: 10,
           compile_us: if(bucket == :missing, do: 1_000, else: nil),
           compile_exact: if(bucket == :missing, do: true, else: nil),
-          saved_us: if(bucket in [:pulled, :present], do: 1_000, else: nil)
+          saved_us: if(bucket in [:pulled, :present], do: 1_000, else: nil),
+          compile_carried_us: if(bucket in [:pulled, :present], do: 2_000, else: nil)
         }
       end
 

@@ -468,6 +468,86 @@ defmodule Depdep.MetresisTest do
     end
   end
 
+  # #101: the unclamped compile the object carries — the estimate a hit
+  # avoided. `saved` is this less the transfer and floored at zero, so the two
+  # are different facts and a panel that sums transfer with `saved` reports
+  # the estimate as transfer whenever the clamp bites.
+  describe "the carried compile time" do
+    defp hit(extra) do
+      struct(
+        %Unit{
+          provider: "mix",
+          label: "app/jason",
+          bucket: :pulled,
+          download_us: 10,
+          restore_us: 10
+        },
+        extra
+      )
+    end
+
+    defp samples_for(unit) do
+      phase = %Phase{
+        provider: "mix",
+        direction: :pull,
+        span_us: 50,
+        concurrency: 8,
+        units: [unit]
+      }
+
+      Metresis.samples(Metrics.to_map([phase], :pull, 100))
+    end
+
+    test "a hit whose object carried one posts it, in seconds, with the unit's labels" do
+      [sample] =
+        hit(compile_carried_us: 2_500_000, saved_us: 2_480_000)
+        |> samples_for()
+        |> Enum.filter(&(&1["metric"] == "depdep.compile_carried"))
+
+      assert sample["value"] == 2.5
+
+      assert sample["labels"] == %{
+               "provider" => "mix",
+               "unit" => "app/jason",
+               "bucket" => "pulled"
+             }
+    end
+
+    test "an object that predates --compile-deps posts nothing, not zero" do
+      samples = hit(compile_carried_us: nil, saved_us: nil) |> samples_for()
+      refute Enum.any?(samples, &(&1["metric"] == "depdep.compile_carried"))
+    end
+
+    # The clamp is why this metric exists: a dependency whose transfer cost
+    # more than its compile reports `saved 0`, and the carried number is the
+    # only one left that says what compiling it would have cost.
+    test "a clamped saved still carries its compile" do
+      samples = hit(compile_carried_us: 300_000, saved_us: 0) |> samples_for()
+
+      assert Enum.find(samples, &(&1["metric"] == "depdep.saved"))["value"] == 0.0
+      assert Enum.find(samples, &(&1["metric"] == "depdep.compile_carried"))["value"] == 0.3
+    end
+
+    test "the --metrics JSON carries the field" do
+      map =
+        Metrics.to_map(
+          [
+            %Phase{
+              provider: "mix",
+              direction: :pull,
+              span_us: 1,
+              concurrency: 1,
+              units: [hit(compile_carried_us: 7)]
+            }
+          ],
+          :pull,
+          1
+        )
+
+      assert [%{compile_carried_us: 7}] = hd(map.phases).units
+    end
+  end
+
   # #59: the number exists only on a unit --compile-deps compiled. Absence is
   # not zero, so every other unit posts no `depdep.compile` at all.
   describe "compile time is posted only where it was measured" do

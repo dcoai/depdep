@@ -216,6 +216,7 @@ Only a series separates a real regression from a noisy afternoon.
     depdep.parallelism  work done ÷ wall-clock               number
     depdep.compile      one unit, compiled on a miss         seconds  (--compile-deps)
     depdep.saved        one unit, a hit's compile not done   seconds  (lower bound)
+    depdep.compile_carried  one unit, what the object says it cost   seconds
     depdep.saved_total  the run's hits together              seconds
     depdep.rebuilt_after_restore  restored, but Mix would rebuild it  count
 

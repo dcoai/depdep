@@ -55,6 +55,13 @@ defmodule Depdep.Metrics do
     `saved_us` is set on a hit whose object carried a compile time: that time,
     less what the transfer cost, floored at zero. `nil` for a hit on an object
     stored before compile times were, and for everything that is not a hit.
+
+    `compile_carried_us` is the same object's compile time *before* that
+    subtraction — what the dependency cost whoever built it. Both come from
+    one read; they are two different facts and neither substitutes for the
+    other. `saved_us` is floored at zero, so a unit whose transfer cost more
+    than its compile reports `saved 0` while still carrying the compile it
+    avoided (#101).
     """
     defstruct [
       :provider,
@@ -64,6 +71,7 @@ defmodule Depdep.Metrics do
       :compile_us,
       :compile_exact,
       :saved_us,
+      :compile_carried_us,
       rebuilt: false,
       offset_us: 0,
       download_us: 0,
