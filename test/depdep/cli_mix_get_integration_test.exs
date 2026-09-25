@@ -64,7 +64,7 @@ defmodule Depdep.CLIMixGetIntegrationTest do
       ["-pa", Application.app_dir(:depdep, "ebin"), "-e", "Depdep.CLI.main(System.argv())", "--"] ++
         args,
       cd: dir,
-      env: [{"DEPDEP_ENDPOINT", nil}, {"DEPDEP_BUCKET", nil}],
+      env: [{"DEPDEP_STORE", nil}, {"DEPDEP_ENDPOINT", nil}, {"DEPDEP_BUCKET", nil}],
       stderr_to_stdout: true
     )
   end

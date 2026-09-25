@@ -19,7 +19,7 @@ variables:
   # running an instruction.
   ERL_MAX_PORTS: "65536"
 
-stages: [test, publish]
+stages: [test, store, publish]
 
 test:
   stage: test
@@ -47,6 +47,78 @@ test:
     # what hex accepts, so `mix hex.publish` cannot be the first thing to find
     # a field missing (#75). Builds a tarball and writes nothing else.
     - mix hex.build --output /tmp/depdep-package.tar
+
+# The claim #14 shipped without: that `apt-get install` USES a restored `.deb`
+# rather than re-fetching it. #41 recorded it as untakeable — "no MinIO was
+# reachable and the environment was not root" — which is false of this job: it
+# runs as root, and it can run a store beside it.
+#
+# **The store here is a mock, and that is on purpose.** MinIO cannot be had
+# any more: `minio/minio` is gone from Docker Hub ("repository does not
+# exist"), `quay.io/minio/minio` answers unauthorized, and
+# `dl.min.io/.../minio` returns 410 — all three checked in this job's own
+# history (#105, and see the proposal on what that means for the README).
+# `adobe/s3mock` hands objects back and takes `initialBuckets`, which is all
+# this job needs: what is under test is apt's behaviour, not the store's. It
+# does NOT validate signatures, so nothing here is evidence about Signature
+# v4 — the reclamation job (#106) needs a server that does, and picks one.
+.store:
+  stage: store
+  services:
+    - name: adobe/s3mock
+      alias: s3
+  variables:
+    # The URL form (#88) driving a real HTTP server for the first time.
+    DEPDEP_STORE: "s3://depdep@s3:9090/depdep-ci"
+    DEPDEP_SECRET_KEY: depdep-ci-secret
+  before_script:
+    # Debian images delete a downloaded .deb the moment it is unpacked, which
+    # would empty the archives directory before the push could see it. The
+    # same line metresis and uficap already carry.
+    - rm -f /etc/apt/apt.conf.d/docker-clean
+    - apt-get update
+    - apt-get install -y --no-install-recommends git curl
+    - mix local.hex --force && mix local.rebar --force
+    - |
+      for _ in $(seq 1 60); do
+        curl -sf http://s3:9090/ > /dev/null 2>&1 && break
+        sleep 1
+      done
+      # The bucket, explicitly. `initialBuckets` did not take (this image
+      # reads it under some other name), and an unsigned PUT works precisely
+      # because s3mock does not check authorization — the same property that
+      # makes it useless as evidence about signing, said plainly here.
+      curl -sf -X PUT http://s3:9090/depdep-ci
+
+apt-round-trip:
+  extends: .store
+  variables:
+    PKGS: tree
+  script:
+    # 1. Fill the archives directory, and prove the assertion discriminates:
+    #    a fetch from Debian DOES print `Get:` lines. If this control ever
+    #    stops printing them, step 4 proves nothing.
+    - apt-get install -d -y $PKGS 2>&1 | tee /tmp/download.log
+    - grep -q '^Get:' /tmp/download.log
+    - test -n "$(ls /var/cache/apt/archives/*.deb 2>/dev/null)"
+
+    # 2. Into the store, and out of the cache.
+    - mix run -e 'Depdep.CLI.main(["--push", "--provider", "apt"])'
+    - rm -f /var/cache/apt/archives/*.deb
+
+    # 3. Back from the store.
+    - mix run -e 'Depdep.CLI.main(["--pull", "--provider", "apt", "--package", "tree"])'
+    - test -n "$(ls /var/cache/apt/archives/*.deb 2>/dev/null)"
+
+    # 4. The claim: apt installs from what depdep restored, fetching nothing.
+    #    `Setting up` too, so "no Get:" cannot pass because nothing installed.
+    - apt-get install -y $PKGS 2>&1 | tee /tmp/install.log
+    - "! grep -q '^Get:' /tmp/install.log"
+    - grep -q 'Setting up tree' /tmp/install.log
+
+    # These have existed since #14 and have never run anywhere: `mix test`
+    # excludes them so the suite stays hermetic on a machine with no apt.
+    - mix test --include apt_integration
 
 # Everything a hex publish would do, done locally, on every tag — package,
 # docs through the ex_doc escript (deps/0 stays empty), hex's own checks — so

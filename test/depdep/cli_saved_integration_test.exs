@@ -50,6 +50,9 @@ defmodule Depdep.CLISavedIntegrationTest do
         ["--project", "." | args],
       cd: dir,
       env: [
+        # The suite is hermetic: an ambient DEPDEP_STORE would make depdep
+        # refuse both forms at once (#93), so clear it for the child.
+        {"DEPDEP_STORE", nil},
         {"DEPDEP_ENDPOINT", "http://127.0.0.1:#{port}"},
         {"DEPDEP_BUCKET", "bucket"},
         {"DEPDEP_ACCESS_KEY", "key"},
