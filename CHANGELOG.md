@@ -6,6 +6,15 @@ are condensed. Issue numbers are dco-tek/depdep's.
 
 ## Unreleased
 
+- **`mix depdep.profile check --instance`**: asks an instance what it holds
+  (`GET /api/v1/profiles/depdep`, with the ingest token depdep already has)
+  and names every difference — a metric either side lacks, and for the ones
+  in common, a `type`/`quantity`/`unit`/`polarity` that disagrees. A hash
+  would have said "differs" without saying how, and the how is the point: the
+  four compile-timing metrics were *present* on cn2 and catalogued as bare
+  numbers. Runs in CI; a difference fails the job, an unreachable or
+  unconfigured instance does not. The profile's own header no longer claims a
+  tag publishes it. (#103, from #100)
 - **`depdep.compile_carried`**: what the stored object says a dependency cost
   to compile, posted for every hit that carries one. `depdep.saved` is that
   number less the transfer and floored at zero, which makes it a saving

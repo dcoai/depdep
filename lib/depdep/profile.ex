@@ -164,6 +164,81 @@ defmodule Depdep.Profile do
   end
 
   @doc """
+  What this depdep ships against what an instance holds: a list of
+  differences, empty when they agree.
+
+  **Not a hash comparison.** A hash says "differs" without saying how, and the
+  how is the whole value: on cn2 the four compile-timing metrics were present
+  but catalogued as bare `number`s rather than durations in seconds, which a
+  hash would have reported identically to a metric being absent (#100). So
+  this compares the vocabulary — which metric keys each side has, and for the
+  ones in common, the four fields that decide how a panel may draw them —
+  and names each difference in the shape `check/1` uses.
+
+  `theirs` is the document the instance returns, with string keys throughout;
+  `:absent` when it holds no such profile at all, which is itself the finding.
+  """
+  def compare(mine, theirs, url)
+
+  def compare(_mine, :absent, url), do: ["no depdep profile on #{url} at all"]
+
+  def compare(mine, theirs, url) do
+    mine_metrics = by_key(mine, "metrics")
+    their_metrics = by_key(theirs, "metrics")
+
+    version(mine, theirs, url) ++
+      missing(
+        MapSet.new(Map.keys(mine_metrics)),
+        MapSet.new(Map.keys(their_metrics)),
+        "in the profile but not on #{url}: metric"
+      ) ++
+      missing(
+        MapSet.new(Map.keys(their_metrics)),
+        MapSet.new(Map.keys(mine_metrics)),
+        "on #{url} but not in the profile: metric"
+      ) ++
+      fields(mine_metrics, their_metrics, url) ++
+      missing(
+        MapSet.new(Map.keys(by_key(mine, "label_keys"))),
+        MapSet.new(Map.keys(by_key(theirs, "label_keys"))),
+        "in the profile but not on #{url}: label"
+      )
+  end
+
+  # The four that decide whether a panel can draw two series on one axis, and
+  # whether up is good. `nil` on either side is a real difference: a metric
+  # registered provisionally has no unit at all.
+  @compared ~w(type quantity unit polarity)
+
+  # `their_metric = ...` is a filter on purpose — a metric the instance lacks
+  # is reported by `missing/3` above, not here. Nothing ELSE may be written as
+  # an assignment: in a comprehension an assignment is a filter on its own
+  # value, so binding a field would drop exactly the case this exists for, a
+  # metric catalogued with no unit at all.
+  defp fields(mine, theirs, url) do
+    for {key, mine_metric} <- Enum.sort(mine),
+        their_metric = Map.get(theirs, key),
+        field <- @compared,
+        Map.get(mine_metric, field) != Map.get(their_metric, field) do
+      "metric #{key}: #{field} #{inspect(Map.get(their_metric, field))} on #{url}, " <>
+        "#{inspect(Map.get(mine_metric, field))} here"
+    end
+  end
+
+  defp version(mine, theirs, url) do
+    case {Map.get(mine, "version"), Map.get(theirs, "version")} do
+      {same, same} -> []
+      {mine_v, their_v} -> ["version #{inspect(their_v)} on #{url}, #{inspect(mine_v)} here"]
+    end
+  end
+
+  defp by_key(document, key) do
+    document
+    |> Map.get(key, [])
+    |> Map.new(fn entry -> {entry["key"], entry} end)
+  end
+
+  @doc """
   The SHA-256 of the document's canonical JSON — sorted keys, no whitespace,
   `Depdep.Json.encode/1`'s output — as lowercase hex. What every ingest post
   carries in `Metresis-Profile`, and what metresis compares with the hash it

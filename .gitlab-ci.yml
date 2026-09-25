@@ -32,6 +32,17 @@ test:
     # provisional again (#69). The suite runs the same check; this is the line
     # a reader of a red pipeline sees.
     - mix depdep.profile check
+    # And what the instance actually holds. Drift detection, not authority: a
+    # difference fails the job; an unreachable or unconfigured instance is one
+    # line and a pass (#100).
+    #
+    # Be clear about what this is worth TODAY: this runner cannot resolve the
+    # host in DEPDEP_METRESIS_URL (nxdomain, the same as every consumer job's
+    # "metrics not reported" line), so it compares nothing and passes. It is
+    # a real gate wherever the instance resolves — an operator's shell now,
+    # this job the day the runner's DNS reaches it. Left in because it costs
+    # nothing and arms itself; read the line in the log rather than assuming.
+    - mix depdep.profile check --instance
     # The package metadata and its file list (mix.exs package/0) are held to
     # what hex accepts, so `mix hex.publish` cannot be the first thing to find
     # a field missing (#75). Builds a tarball and writes nothing else.

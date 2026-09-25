@@ -121,6 +121,188 @@ defmodule Depdep.ProfileTest do
     end
   end
 
+  # #100: the drift a local check cannot see. On cn2 the four compile-timing
+  # metrics were present and catalogued as bare `number`s — a hash comparison
+  # would have said "differs" and stopped there.
+  describe "compare/3 — what this ships against what an instance holds" do
+    defp theirs(metrics, extra \\ %{}) do
+      Map.merge(
+        %{"key" => "depdep", "version" => 1, "metrics" => metrics, "label_keys" => []},
+        extra
+      )
+    end
+
+    defp mine(metrics, extra \\ %{}) do
+      theirs(metrics, extra)
+    end
+
+    defp metric(key, fields \\ %{}) do
+      Map.merge(
+        %{
+          "key" => key,
+          "type" => "gauge",
+          "quantity" => "duration",
+          "unit" => "s",
+          "polarity" => "neutral"
+        },
+        fields
+      )
+    end
+
+    test "agreement is an empty list" do
+      document = mine([metric("depdep.saved")])
+      assert Profile.compare(document, document, "http://m") == []
+    end
+
+    test "a metric the instance lacks is named" do
+      assert ["in the profile but not on http://m: metric depdep.compile_carried"] =
+               Profile.compare(mine([metric("depdep.compile_carried")]), theirs([]), "http://m")
+    end
+
+    test "a metric only the instance has is named too — the profile may have dropped it" do
+      assert ["on http://m but not in the profile: metric depdep.legacy"] =
+               Profile.compare(mine([]), theirs([metric("depdep.legacy")]), "http://m")
+    end
+
+    # The case that actually happened: present on both sides, cataloged bare.
+    test "a metric present on both sides but catalogued differently names the field" do
+      provisional = metric("depdep.saved", %{"quantity" => "number", "unit" => nil})
+
+      assert [quantity, unit] =
+               Profile.compare(mine([metric("depdep.saved")]), theirs([provisional]), "http://m")
+
+      assert quantity == ~s(metric depdep.saved: quantity "number" on http://m, "duration" here)
+      assert unit == ~s(metric depdep.saved: unit nil on http://m, "s" here)
+    end
+
+    test "a differing version is reported, and an absent profile is the finding" do
+      assert [~s(version 2 on http://m, 1 here)] =
+               Profile.compare(mine([]), theirs([], %{"version" => 2}), "http://m")
+
+      assert ["no depdep profile on http://m at all"] =
+               Profile.compare(mine([]), :absent, "http://m")
+    end
+
+    test "the shipped document compares clean against itself" do
+      assert Profile.compare(Profile.read(), Profile.read(), "http://m") == []
+    end
+  end
+
+  # The task half: one GET, and every answer that is not a difference must
+  # leave the pipeline alone.
+  describe "mix depdep.profile check --instance" do
+    setup do
+      saved =
+        {System.get_env("DEPDEP_METRESIS"), System.get_env("DEPDEP_METRESIS_TOKEN"),
+         System.get_env("DEPDEP_METRESIS_URL")}
+
+      on_exit(fn ->
+        {m, t, u} = saved
+
+        for {name, value} <- [
+              {"DEPDEP_METRESIS", m},
+              {"DEPDEP_METRESIS_TOKEN", t},
+              {"DEPDEP_METRESIS_URL", u}
+            ] do
+          if value, do: System.put_env(name, value), else: System.delete_env(name)
+        end
+      end)
+
+      System.delete_env("DEPDEP_METRESIS_URL")
+      :ok
+    end
+
+    defp answering(status, body) do
+      {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true, packet: :raw])
+      {:ok, port} = :inet.port(listen)
+      me = self()
+
+      spawn_link(fn ->
+        {:ok, socket} = :gen_tcp.accept(listen)
+        send(me, {:asked, recv_request(socket, "")})
+
+        :gen_tcp.send(socket, [
+          "HTTP/1.1 #{status} X\r\ncontent-length: #{byte_size(body)}\r\n",
+          "content-type: application/json\r\n\r\n",
+          body
+        ])
+
+        :gen_tcp.close(socket)
+      end)
+
+      System.put_env("DEPDEP_METRESIS", "http://127.0.0.1:#{port}")
+      System.put_env("DEPDEP_METRESIS_TOKEN", "mtr_ing_test")
+      port
+    end
+
+    defp recv_request(socket, acc) do
+      case :gen_tcp.recv(socket, 0, 2_000) do
+        {:ok, data} ->
+          acc = acc <> data
+          if String.contains?(acc, "\r\n\r\n"), do: acc, else: recv_request(socket, acc)
+
+        {:error, _} ->
+          acc
+      end
+    end
+
+    defp asked do
+      receive do
+        {:asked, raw} -> raw
+      after
+        3_000 -> flunk("the instance was never asked")
+      end
+    end
+
+    test "an instance holding this document is green, and is asked with the ingest token" do
+      port = answering(200, Depdep.Json.encode(Profile.read()))
+
+      assert Mix.Tasks.Depdep.Profile.run(["check", "--instance"]) == :ok
+
+      raw = asked()
+      assert raw =~ "GET /api/v1/profiles/depdep HTTP/1.1"
+      assert raw =~ "authorization: Bearer mtr_ing_test"
+      assert raw =~ "127.0.0.1:#{port}"
+    end
+
+    test "a difference fails, naming it" do
+      stripped =
+        Map.update!(
+          Profile.read(),
+          "metrics",
+          &Enum.reject(&1, fn m -> m["key"] == "depdep.saved" end)
+        )
+
+      answering(200, Depdep.Json.encode(stripped))
+
+      assert_raise Mix.Error, ~r/1 difference\(s\)/, fn ->
+        Mix.Tasks.Depdep.Profile.run(["check", "--instance"])
+      end
+    end
+
+    test "an instance with no depdep profile at all fails" do
+      answering(404, ~s({"errors":[{"path":"key","error":"not a profile"}]}))
+
+      assert_raise Mix.Error, ~r/difference/, fn ->
+        Mix.Tasks.Depdep.Profile.run(["check", "--instance"])
+      end
+    end
+
+    # The rule this check lives by: it may report, it may not break a build
+    # for a reason that is not about the profile.
+    test "an unreachable instance is a note and exit 0" do
+      System.put_env("DEPDEP_METRESIS", "http://127.0.0.1:1")
+      System.put_env("DEPDEP_METRESIS_TOKEN", "t")
+      assert Mix.Tasks.Depdep.Profile.run(["check", "--instance"]) == :ok
+    end
+
+    test "no metresis configured is a note and exit 0" do
+      System.delete_env("DEPDEP_METRESIS")
+      System.delete_env("DEPDEP_METRESIS_TOKEN")
+      assert Mix.Tasks.Depdep.Profile.run(["check", "--instance"]) == :ok
+    end
+  end
+
   test "mix depdep.profile publish is gone: a usage error, not a silent nothing" do
     assert_raise Mix.Error, ~r/usage: mix depdep.profile check/, fn ->
       Mix.Tasks.Depdep.Profile.run(["publish"])
