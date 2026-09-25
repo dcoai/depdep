@@ -120,6 +120,80 @@ apt-round-trip:
     # excludes them so the suite stays hermetic on a machine with no apt.
     - mix test --include apt_integration
 
+# #28 shipped saying reclamation had never seen a live bucket, and #41 has
+# carried it since. This runs it against a real S3 server, across a page
+# boundary — the one thing the socket tests cannot reach, because a second
+# page means a continuation token and its query-parameter signing.
+#
+# **s3proxy, not the apt job's s3mock, and the difference is the point:**
+# s3proxy enforces Signature v4 (`S3PROXY_AUTHORIZATION: aws-v4`), so a
+# mis-signed continuation token answers 403 here instead of being waved
+# through. MinIO would have been the obvious choice and cannot be obtained
+# at all any more (#107). The bucket is a directory under the filesystem
+# backend's base dir, made before the server starts.
+reclamation:
+  stage: store
+  services:
+    - name: andrewgaul/s3proxy
+      alias: s3
+      entrypoint: ["/bin/sh", "-c"]
+      command: ["mkdir -p /data/depdep-ci && exec /opt/s3proxy/run-docker-container.sh"]
+  variables:
+    S3PROXY_AUTHORIZATION: aws-v4
+    S3PROXY_IDENTITY: depdep
+    S3PROXY_CREDENTIAL: depdep-ci-secret
+    S3PROXY_ENDPOINT: "http://0.0.0.0:80"
+    JCLOUDS_PROVIDER: filesystem
+    JCLOUDS_FILESYSTEM_BASEDIR: /data
+    DEPDEP_STORE: "s3://depdep@s3:80/depdep-ci"
+    DEPDEP_SECRET_KEY: depdep-ci-secret
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends git curl
+    - mix local.hex --force && mix local.rebar --force
+    - |
+      for _ in $(seq 1 60); do
+        curl -s -o /dev/null http://s3:80/ && break
+        sleep 1
+      done
+      curl -s -o /dev/null -w 's3proxy answers %{http_code}\n' http://s3:80/
+  script:
+    # Over a thousand objects, so the listing pages and the continuation
+    # token is signed for real.
+    - mix run ci/fill_store.exs
+
+    # --report: the first honest look at a store's contents (#10's inventory).
+    # It groups by package, so ten lines of 105 is the shape asserted.
+    - mix run -e 'Depdep.CLI.main(["--report"])' 2>&1 | tee /tmp/report.log
+    - grep -qE '1 roots, 1 written in the last' /tmp/report.log
+    - test "$(grep -c '^depdep:.v3/pkg' /tmp/report.log)" = 10
+    - grep -qE '105 objects.*1 reachable, 104 not' /tmp/report.log
+
+    # --sweep without --confirm removes nothing.
+    #
+    # `--grace=-1`, and the minus sign is the finding: the comparison is
+    # `DateTime.diff(now, at, :day) <= days` in WHOLE days, so `--grace 0`
+    # still protects everything written today — every object here is seconds
+    # old. -1 is the only value that leaves nothing protected. Filed as its
+    # own issue; this job is what found it, on the first run of --sweep
+    # against a store.
+    # The total line is also the page-boundary evidence: 1051 objects came
+    # back from a listing that caps at 1000 per page.
+    - mix run -e 'Depdep.CLI.main(["--sweep", "--grace", "-1"])' 2>&1 | tee /tmp/dry.log
+    - grep -qE '1051 objects, 1 current roots, 0 within' /tmp/dry.log
+    - grep -q 'would delete' /tmp/dry.log
+    - grep -qE '1040 objects would be removed' /tmp/dry.log
+    # Through a file, not a pipe into `grep -q`: under pipefail an early-
+    # exiting reader makes the writer die of SIGPIPE and the job fails at
+    # random (the lesson bizex's CI already carries).
+    - mix run -e 'Depdep.CLI.main(["--report"])' 2>&1 | tee /tmp/report2.log
+    - grep -qE '105 objects' /tmp/report2.log
+
+    # And with it, exactly what no root names.
+    - mix run -e 'Depdep.CLI.main(["--sweep", "--grace", "-1", "--confirm"])' 2>&1 | tee /tmp/sweep.log
+    - grep -qE 'removed 1040 of 1040' /tmp/sweep.log
+    - mix run -e 'Depdep.CLI.main(["--report"])' 2>&1 | tee /tmp/after.log
+    - test "$(grep -c '1 objects, 0.0 MiB — 1 reachable, 0 not' /tmp/after.log)" = 10
+
 # Everything a hex publish would do, done locally, on every tag — package,
 # docs through the ex_doc escript (deps/0 stays empty), hex's own checks — so
 # the day a real publish is wanted (#73) nothing is being tried for the first
