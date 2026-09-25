@@ -3,8 +3,14 @@
 # This is the emitter's own vocabulary (metresis #206, spec §3.3): the metric
 # keys, their units and polarity, the label keys and their expected values, and
 # a starter dashboard. `mix depdep.profile check` holds it to what
-# `Depdep.Metresis` actually emits, both ways, and `mix depdep.profile publish`
-# POSTs it on tag with `adopt: true`.
+# `Depdep.Metresis` actually emits, both ways.
+#
+# Reaching an instance is the data path's job, not a pipeline's: every ingest
+# post carries this document's hash, and an instance that does not hold it
+# answers 428 and is sent the document by the same run, with the same ingest
+# token (`Depdep.Metresis`, #86; metresis #243). `mix depdep.profile check
+# --instance` asks an instance what it holds and names every difference —
+# drift detection, not authority. There is no tag job and no admin token.
 #
 # An Elixir map literal rather than YAML, and string keys throughout: depdep has
 # no dependencies (README §"Why no dependencies"), `Depdep.Json` encodes this as
