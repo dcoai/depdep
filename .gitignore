@@ -10,3 +10,6 @@ erl_crash.dump
 .elixir_ls/
 # mix hex.build without --output writes the package here
 /depdep-*.tar
+
+# Local credentials — a metresis read token, a store secret. Never committed.
+*_token
