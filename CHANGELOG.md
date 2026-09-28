@@ -4,7 +4,19 @@ What changed for a user of depdep, per release. Each version is a git tag;
 the four earliest also carry GitLab release notes, from which these entries
 are condensed. Issue numbers are dco-tek/depdep's.
 
-## Unreleased
+## v0.7.0 — 2026-09-28
+
+The key's inputs become Mix's own, and the profile learns to travel with the
+data. **Every object path changes**: a consumer's first pipeline on this
+version refills the store and the second is warm, so expect one cold run.
+That refill is also the point — objects pushed by this version carry compile
+times, which is what makes `depdep.saved` and `depdep.compile_carried` mean
+anything.
+
+- **The store-backed CI harness** proves two claims that shipped unverified:
+  that `apt-get install` uses a restored `.deb`, and that `--report` and
+  `--sweep` work against a real S3 server across a listing page boundary.
+  Both run on every pipeline. (#104–#106, from #41)
 
 - **`mix depdep.profile check --instance`**: asks an instance what it holds
   (`GET /api/v1/profiles/depdep`, with the ingest token depdep already has)

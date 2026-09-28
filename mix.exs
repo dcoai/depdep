@@ -4,7 +4,7 @@ defmodule Depdep.MixProject do
   # Moves in the same commit the release tag will point at. Nothing warns when a
   # tag and this disagree, and they did for two releases before being collapsed
   # back to one — see #40.
-  @version "0.6.0"
+  @version "0.7.0"
   @source_url "https://gitlab.conet.yarina.org/dco-tek/depdep"
 
   def project do
