@@ -32,21 +32,28 @@ test:
     # provisional again (#69). The suite runs the same check; this is the line
     # a reader of a red pipeline sees.
     - mix depdep.profile check
-    # And what the instance actually holds. Drift detection, not authority: a
-    # difference fails the job; an unreachable or unconfigured instance is one
-    # line and a pass (#100).
-    #
-    # Be clear about what this is worth TODAY: this runner cannot resolve the
-    # host in DEPDEP_METRESIS_URL (nxdomain, the same as every consumer job's
-    # "metrics not reported" line), so it compares nothing and passes. It is
-    # a real gate wherever the instance resolves — an operator's shell now,
-    # this job the day the runner's DNS reaches it. Left in because it costs
-    # nothing and arms itself; read the line in the log rather than assuming.
-    - mix depdep.profile check --instance
     # The package metadata and its file list (mix.exs package/0) are held to
     # what hex accepts, so `mix hex.publish` cannot be the first thing to find
     # a field missing (#75). Builds a tarball and writes nothing else.
     - mix hex.build --output /tmp/depdep-package.tar
+
+# What the instance actually holds, against what this depdep ships (#103).
+#
+# **Advisory, on purpose, and here is the condition for making it a gate.**
+# It found real drift the first time it could reach cn2: the instance's
+# PROFILE is the old one, even though its catalogue was repaired by hand
+# (#100). Nothing in this repository can fix that — the document reaches an
+# instance through the data path (a 428 on ingest, #87), which needs a tagged
+# depdep carrying the handshake AND the `profile` capability on the CI token.
+# Until both exist, failing the build here would block every unrelated change
+# for a reason no commit can address, which is worse than an amber job.
+#
+# Flip `allow_failure` to false the day this job passes on main.
+profile-instance-check:
+  stage: test
+  allow_failure: true
+  script:
+    - mix depdep.profile check --instance
 
 # The claim #14 shipped without: that `apt-get install` USES a restored `.deb`
 # rather than re-fetching it. #41 recorded it as untakeable — "no MinIO was
