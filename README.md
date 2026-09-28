@@ -264,7 +264,7 @@ Depdep runs *before* `mix deps.get`, so it cannot be a dependency in your
 `mix.exs` — that would be circular. Commit this as `scripts/depdep.exs`:
 
 ```elixir
-Mix.install([{:depdep, "~> 0.5"}])
+Mix.install([{:depdep, "~> 0.7"}])
 
 Depdep.CLI.main(System.argv())
 ```
@@ -272,7 +272,7 @@ Depdep.CLI.main(System.argv())
 `Mix.install/2` fetches into its own cache, independent of your project's
 `deps/`, so there is no ordering problem and no root Mix project required.
 
-**Until depdep is on hex.pm — and as of v0.6.0 it is not; publishing is a
+**Until depdep is on hex.pm — and as of v0.7.0 it is not; publishing is a
 separate decision from tagging — install it from git instead.** The git form
 also stays the way to run a commit that has no release yet:
 
@@ -286,7 +286,7 @@ url =
     token -> "https://gitlab-ci-token:#{token}@gitlab.example.com/group/depdep.git"
   end
 
-Mix.install([{:depdep, git: url, tag: "v0.6.0"}])
+Mix.install([{:depdep, git: url, tag: "v0.7.0"}])
 
 Depdep.CLI.main(System.argv())
 ```
@@ -810,8 +810,8 @@ pipelines a pull costs 1.3–1.6 s for 44 Debian packages and 3.2–4.2 s for
 ~50 compiled dependencies, over the network. A restored git mirror measured
 2.43 s cold against 0.57 s on a 7.4 MB repository.
 
-**Measured, and worth knowing before relying on it.** Each mechanism below is
-tested; the first is now measured in a pipeline, the other two are not.
+**Measured, and worth knowing before relying on it.** Every mechanism below
+is now exercised where it can be seen, not asserted.
 
 - **Concurrency is not where the time is.** Measured on extc (34 objects,
   ~1 MiB average, MinIO on the LAN; eight pipelines, serial and derived
@@ -822,14 +822,20 @@ tested; the first is now measured in a pipeline, the other two are not.
   what a consumer sees; at this scale the transfer is a small share of the
   pull. `DEPDEP_CONCURRENCY=1` stays as the instrument for anyone with a
   larger store or a slower link.
-- **Nothing has watched `apt-get install` consume a restored `.deb`.** A root
-  job restores every file apt said it would fetch (`missing 0`) and the install
-  succeeds, but it runs `apt-get install -qq`, which hides the fetch lines that
-  would prove apt used the file rather than re-downloading it. The check is one
-  `-q` instead of `-qq`, or a read of `/var/log/apt/history.log`.
-- **Reclamation has never run against a real bucket.** The rules are tested and
-  the S3 verbs are exercised over a socket, but no `--report` or `--sweep` has
-  seen a live store.
+- **apt uses the restored `.deb`.** Every pipeline runs the round trip under
+  root: download, push, empty the archives directory, pull, then
+  `apt-get install` — asserting **no `Get:` lines** and that the package is
+  configured. A control in the same job asserts the fetch before it *does*
+  print `Get:`, so the assertion cannot pass by accident.
+- **Reclamation runs against a real S3 server.** Every pipeline fills a
+  throwaway store with over a thousand objects — enough to cross the
+  1000-per-page listing boundary, so a real continuation token is signed
+  against a server that enforces Signature v4 — then asserts what `--report`
+  says, that `--sweep` without `--confirm` removes nothing, and that with it
+  exactly the objects no root references go.
+
+  What no container can answer is what the *production* bucket holds. That
+  stays an operator's `--report`, and it is the one claim still outstanding.
 
 **Not on hex.pm yet.** The package builds (`mix hex.build`) and every tag
 rehearses a publish, but no version has been published; until one is, install
