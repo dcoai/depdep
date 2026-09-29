@@ -52,6 +52,40 @@ defmodule Depdep.CLITest do
       assert opts[:help]
     end
 
+    # spec/09-cli.md#switches. Both directions, because each catches a different
+    # mistake: a switch added to @switches and not documented is invisible to a
+    # reader, and a switch documented but never accepted is a promise the code
+    # does not keep. #119 wrote the spec's table from @switches, so this is what
+    # keeps all three in step.
+    @tag verifies: "cli-switches-documented"
+    test "every switch is documented, and every documented switch is accepted" do
+      {usage, 0} =
+        System.cmd(
+          "elixir",
+          ["-pa", Application.app_dir(:depdep, "ebin"), "-e", "Depdep.CLI.main([\"--help\"])"],
+          stderr_to_stdout: true
+        )
+
+      switches =
+        Depdep.CLI.switches()
+        |> Keyword.keys()
+        |> Enum.map(&("--" <> String.replace(to_string(&1), "_", "-")))
+
+      for switch <- switches do
+        assert usage =~ switch, "#{switch} is accepted but not in --help"
+      end
+
+      documented =
+        ~r/--[a-z][a-z-]+/
+        |> Regex.scan(usage)
+        |> List.flatten()
+        |> Enum.uniq()
+
+      for switch <- documented do
+        assert switch in switches, "#{switch} is in --help but not accepted"
+      end
+    end
+
     test "--help documents both forms of the store and of metresis (#88)" do
       {text, 0} =
         System.cmd(
