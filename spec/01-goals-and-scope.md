@@ -4,10 +4,44 @@ Depdep restores compiled build artifacts — Elixir dependencies, distribution
 packages and git mirrors — from a content-addressed store, so a CI job does not
 rebuild what some earlier job already built.
 
-This file states the two constraints that shape everything else. The problem
-statement, the non-goals and the rest of the scope arrive with #114; the two
-requirements below are here because #113 is the change that makes one of them
-enforceable.
+What depdep is chosen instead of, and why, is `spec/00-prior-art.md`.
+
+## What depdep is for {#purpose}
+
+Two problems, depending on the shape of the project.
+
+**In a poncho** — several independent Mix projects in one repository, each with
+its own `deps/` and `_build/` — the same package is compiled once per member.
+Measured on the project depdep was extracted from: 564 dependency instances over
+113 distinct packages, with `ash` compiled ten times at 44 s a pass. Depdep
+collapsed that to 148 stored objects and took CI from about 28 minutes to 6m24s.
+
+**In a single project** the win is across *pipelines* rather than members:
+compiled dependencies persist between CI runs.
+
+The second is what a CI cache normally does. The difference is correctness, and
+it is the reason depdep exists rather than a configuration of something else:
+`spec/00-prior-art.md#ci-caches`.
+
+## Non-goals {#non-goals}
+
+Stated so that scope creep has to argue with something.
+
+- **Not a general build cache.** Depdep covers Elixir dependency builds, `.deb`
+  packages and git mirrors. It is not action-level caching for arbitrary work,
+  and `spec/00-prior-art.md#bazel` records what is.
+- **Not a substitute for Mix's correctness machinery.** Depdep must never serve
+  what Mix would not accept. Where a restored unit would be rebuilt by Mix, that
+  is a miss and is reported as one — the restore check in `spec/06-the-run.md`.
+- **Not a publisher-side distribution mechanism.** Objects are
+  consumer-produced, keyed on the whole input closure. The publisher-side
+  equivalent already exists and is a different thing:
+  `spec/00-prior-art.md#precompiled`.
+- **Not a package manager.** Depdep resolves nothing. It reads the lock and asks
+  Mix; it never decides which versions a project should have.
+- **Not a store administrator.** Reclamation exists and is deliberately narrow
+  (`spec/08-reclamation.md`); depdep does not create buckets, manage retention
+  policies or hold credentials beyond the run.
 
 ## Zero runtime dependencies {#zero-runtime-deps}
 
