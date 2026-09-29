@@ -23,8 +23,10 @@ It is still a cost, which is why the three rails below exist.
 
 `Depdep.CLI.Operator.sweep/1` refuses to remove anything unless all three hold.
 
-- **Nothing is deleted without `--confirm`.** `--dry-run` says what it would
-  remove and removes nothing.
+- **Nothing is deleted without `--confirm`.** A `--sweep` without it is a dry
+  run: it says exactly what it would remove and removes nothing. There is no
+  `--dry-run` switch, and none is wanted — the safe behaviour is the default, so
+  the destructive act is the one that has to be spelled out.
 - **`--grace DAYS`** (default 2) never touches anything created that recently, so
   a push racing a listing is not swept.
 - **No current roots means no sweep.** A store nobody uses and a misconfigured

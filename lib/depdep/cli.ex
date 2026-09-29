@@ -42,6 +42,15 @@ defmodule Depdep.CLI do
     help: :boolean
   ]
 
+  @doc """
+  The switches this version accepts, as `OptionParser` strict options.
+
+  Public so `spec/09-cli.md#switches` can be held to it in both directions
+  (#119): a switch accepted and undocumented is invisible to a reader, and a
+  switch documented and not accepted is a promise the code does not keep.
+  """
+  def switches, do: @switches
+
   def main(argv) do
     with {:ok, opts} <- classify(parse(argv), :switch),
          :run <- disposition(opts),
@@ -767,6 +776,7 @@ defmodule Depdep.CLI do
                  unless --confirm is given)
       --pull     restore what the store has
       --push     upload what it does not
+      --help     this text
       --mix-get  with --pull: run mix deps.get after the pull, then decide again
                  what could not be decided before the source was on disk — a git
                  dependency and its cone are pulled in the same invocation, so
