@@ -74,9 +74,16 @@ is an optimisation. Neither may cost a job its result.
 two and leaves the exit code alone: a 4xx, a 5xx, a timeout or a refused
 connection is a line on stderr and nothing more.
 
-`Depdep.CLI.main/1` exits non-zero for exactly one class of condition — a
-malformed invocation, which exits 2. No store failure, no metresis failure and no
-unreachable endpoint changes a run's exit code.
+`Depdep.CLI.main/1` exits non-zero for exactly two conditions, and neither is a
+store failure:
+
+- a **malformed invocation**, which exits 2;
+- a dependency that **does not compile** under `--compile-deps`, which exits with
+  Mix's own status (`spec/06-the-run.md#compile-failure`). The failure there is
+  the consumer's own compile, surfaced one line earlier with the same error text.
+
+No store failure, no metresis failure and no unreachable endpoint changes a run's
+exit code.
 
 > `post/3`'s own `@doc` lists three outcomes and omits `{:warn, message}`, which
 > `Depdep.CLI.main/1` handles and which `send_with_profile/4` returns. The code is

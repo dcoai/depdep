@@ -82,6 +82,7 @@ defmodule Depdep.CLIRebuiltIntegrationTest do
     )
   end
 
+  @tag verifies: "restore-check-rebuckets"
   test "a hit Mix would rebuild is counted as a miss, said, and compiled", ctx do
     a = checkout(ctx.base, "a", ctx.upstream)
 
