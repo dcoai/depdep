@@ -51,38 +51,39 @@ defmodule Depdep.CLI.Operator do
 
   defp sweep_objects(cfg, objects, opts) do
     within = Keyword.get(opts, :within, 30)
-    {roots, _stored} = Enum.split_with(objects, &String.starts_with?(&1.key, Roots.prefix()))
-    fresh = Enum.filter(roots, &within?(&1, within))
 
-    if fresh == [] do
-      # A store nobody uses and a misconfigured invocation look identical from
-      # here, and one of them would have this delete everything.
-      warn("no root has been written in the last #{within} days — refusing to sweep")
-      warn("run --report first; if consumers really have stopped, widen --within")
-    else
-      live = reachable_set(cfg, fresh)
+    # The decision itself lives in `Depdep.Sweep.current_roots/2`, beside the
+    # other sweep rules and testable without a store (#126). This branch is only
+    # what to say about it.
+    case Sweep.current_roots(objects, window_days: within) do
+      {:refuse, reason} ->
+        warn(reason <> " — refusing to sweep")
+        warn("run --report first; if consumers really have stopped, widen --within")
 
-      rules = [
-        grace_days: Keyword.get(opts, :grace, 2),
-        window_days: within,
-        keep_epochs: Keyword.get(opts, :keep_epochs, 2)
-      ]
+      {:ok, fresh} ->
+        live = reachable_set(cfg, fresh)
 
-      doomed = Sweep.plan(objects, live, rules)
-      protected = Sweep.protected(objects, rules)
+        rules = [
+          grace_days: Keyword.get(opts, :grace, 2),
+          window_days: within,
+          keep_epochs: Keyword.get(opts, :keep_epochs, 2)
+        ]
 
-      IO.puts(
-        "depdep: #{length(objects)} objects, #{length(fresh)} current roots, " <>
-          "#{protected} within the #{rules[:grace_days]}-day grace period"
-      )
+        doomed = Sweep.plan(objects, live, rules)
+        protected = Sweep.protected(objects, rules)
 
-      Enum.each(doomed, fn {object, reason} ->
         IO.puts(
-          "depdep: #{if opts[:confirm], do: "delete", else: "would delete"} #{object.key} — #{reason}"
+          "depdep: #{length(objects)} objects, #{length(fresh)} current roots, " <>
+            "#{protected} within the #{rules[:grace_days]}-day grace period"
         )
-      end)
 
-      if opts[:confirm], do: delete_all(cfg, doomed), else: dry_run_summary(doomed)
+        Enum.each(doomed, fn {object, reason} ->
+          IO.puts(
+            "depdep: #{if opts[:confirm], do: "delete", else: "would delete"} #{object.key} — #{reason}"
+          )
+        end)
+
+        if opts[:confirm], do: delete_all(cfg, doomed), else: dry_run_summary(doomed)
     end
   end
 
@@ -111,7 +112,17 @@ defmodule Depdep.CLI.Operator do
 
   defp render_report(cfg, objects, within) do
     {roots, stored} = Enum.split_with(objects, &String.starts_with?(&1.key, Roots.prefix()))
-    {fresh, stale} = Enum.split_with(roots, &within?(&1, within))
+
+    # The same rule `--sweep` uses (#126). Two definitions of "a current root"
+    # would let the report an operator checks before deleting disagree with the
+    # delete, which is the one disagreement that must not exist here.
+    fresh =
+      case Sweep.current_roots(objects, window_days: within) do
+        {:ok, fresh} -> fresh
+        {:refuse, _} -> []
+      end
+
+    stale = roots -- fresh
     reachable = reachable_set(cfg, fresh)
 
     IO.puts("depdep: #{length(roots)} roots, #{length(fresh)} written in the last #{within} days")
@@ -156,13 +167,6 @@ defmodule Depdep.CLI.Operator do
       File.rm(tmp)
       Enum.into(paths, acc)
     end)
-  end
-
-  defp within?(%{last_modified: stamp}, days) do
-    case DateTime.from_iso8601(stamp) do
-      {:ok, at, _} -> DateTime.diff(DateTime.utc_now(), at, :day) <= days
-      _ -> false
-    end
   end
 
   # Object paths are readable by design — `v2/...`, `apt/v1/...`, `git/v1/...` —

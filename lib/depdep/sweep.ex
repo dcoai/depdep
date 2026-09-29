@@ -49,6 +49,41 @@ defmodule Depdep.Sweep do
     |> Enum.flat_map(&verdict(&1, live, window_days, keep_epochs, now, epochs(settled)))
   end
 
+  @doc """
+  The roots that count as current, or a refusal — the third rail
+  (`spec/08-reclamation.md#rails`).
+
+  **A store nobody uses and a misconfigured invocation look identical from the
+  outside**, and one of them would have reclamation delete everything. So the
+  absence of any current root is a refusal rather than an empty live set.
+
+  Pure, and here rather than in `Depdep.CLI.Operator`, because this is the rail
+  whose failure is unbounded and it was the one with no test (#126). The other
+  two rails guard against the clock and against a slip of the hand; this one
+  guards against the operator being wrong.
+
+  `{:ok, roots}` or `{:refuse, reason}`. An unparseable timestamp counts as
+  **current**, the same fail-safe direction `verdict/6` takes and the one
+  `spec/08-reclamation.md#prefixes` states: an unreadable age must not silently
+  shrink the live set, because a shrunken live set means over-deletion. The
+  private helper this replaced in `Depdep.CLI.Operator` treated it as stale,
+  which contradicted both.
+  """
+  def current_roots(objects, opts \\ []) do
+    within = Keyword.get(opts, :window_days, 30)
+    now = Keyword.get(opts, :now, DateTime.utc_now())
+
+    fresh =
+      objects
+      |> Enum.filter(&String.starts_with?(&1.key, Depdep.Roots.prefix()))
+      |> Enum.filter(&newer_than?(&1, within, now))
+
+    case fresh do
+      [] -> {:refuse, "no root has been written in the last #{within} days"}
+      fresh -> {:ok, fresh}
+    end
+  end
+
   @doc "How many objects the grace period is protecting, for the report."
   def protected(objects, opts) do
     grace_days = Keyword.get(opts, :grace_days, 2)

@@ -31,7 +31,11 @@ It is still a cost, which is why the three rails below exist.
   a push racing a listing is not swept.
 - **No current roots means no sweep.** A store nobody uses and a misconfigured
   invocation look identical from the outside, and one of them would delete
-  everything. It refuses and says to look at `--report` first.
+  everything. `Depdep.Sweep.current_roots/2` decides, and refuses with a reason;
+  the CLI adds that `--report` is where to look first. An unreadable timestamp
+  counts as **current** here, the same fail-safe direction `#prefixes` states —
+  an unreadable age must not silently shrink the live set, because a shrunken
+  live set means over-deletion.
 
 The third is the one that matters most, because it is the only one that protects
 against the operator being wrong rather than against the clock.
@@ -45,13 +49,10 @@ given a listing and no current roots
 then nothing is swept, and the refusal says to look at --report
 ```
 
-**This hint is currently unmet, and deliberately left in.** No test covers the
-refusal: it lives in `Depdep.CLI.Operator.sweep/1`, which talks to a store, while
-`Depdep.Sweep.plan/3` is pure and takes the live set as an argument — so the rail
-whose failure is unbounded is the one on the untested side of that line. Filed as
-**#126**. Removing the hint would make the numbers look clean and lose the only
-thing that will force the test to be written: once `require: [test_hint:
-[:verifies]]` is set, an unmet hint fails the check.
+Met by #126, which also moved the decision out of the CLI and into
+`Depdep.Sweep` so it could be tested at all. `--report` now counts a current root
+by the same function, because a report that disagreed with the sweep it precedes
+would be worse than no report.
 
 ## One rule per prefix, because the providers are not alike {#prefixes}
 

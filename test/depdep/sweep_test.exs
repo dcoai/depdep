@@ -27,6 +27,57 @@ defmodule Depdep.SweepTest do
     |> Enum.map(fn {object, _reason} -> object.key end)
   end
 
+  # #126: the third rail, which had no test at all. The other two guard against
+  # the clock and against a slip of the hand; this one guards against the
+  # OPERATOR being wrong — a store nobody uses and a misconfigured invocation
+  # look identical from the outside, and one of them would empty the bucket.
+  #
+  # It had no test because it lived in `Depdep.CLI.Operator`, which talks to a
+  # store, while every other rule lived here. The decision has moved here.
+  describe "current roots — the rail against the operator being wrong" do
+    @tag verifies: "sweep-refuses-without-roots"
+    test "no roots at all is a refusal, not an empty live set" do
+      objects = [object("v3/jason/1.4.4/abc.tar.gz", 90)]
+
+      assert {:refuse, reason} = Sweep.current_roots(objects, now: @now)
+      assert reason =~ "no root has been written"
+      assert reason =~ "30"
+    end
+
+    test "only stale roots is a refusal too, because the live set would be empty" do
+      objects = [
+        object("roots/gone/main/mix.json", 400),
+        object("v3/jason/1.4.4/abc.tar.gz", 90)
+      ]
+
+      assert {:refuse, _} = Sweep.current_roots(objects, now: @now)
+    end
+
+    test "one current root is enough to proceed, and only roots are returned" do
+      root = object("roots/live/main/mix.json", 3)
+      objects = [root, object("v3/jason/1.4.4/abc.tar.gz", 90)]
+
+      assert {:ok, [^root]} = Sweep.current_roots(objects, now: @now)
+    end
+
+    test "the window is configurable, and applied against the given clock" do
+      objects = [object("roots/live/main/mix.json", 45)]
+
+      assert {:refuse, _} = Sweep.current_roots(objects, now: @now, window_days: 30)
+      assert {:ok, [_]} = Sweep.current_roots(objects, now: @now, window_days: 60)
+    end
+
+    # spec/08-reclamation.md#prefixes: an unreadable age is treated as recent.
+    # The helper this replaced in Depdep.CLI.Operator treated it as stale, which
+    # would drop the root from the live set and expose everything it protects.
+    # Keeping it costs disk; dropping it costs an object somebody still wanted.
+    test "an unparseable timestamp counts as current, the fail-safe direction" do
+      objects = [%{key: "roots/live/main/mix.json", size: 10, last_modified: "not a date"}]
+
+      assert {:ok, [_]} = Sweep.current_roots(objects, now: @now)
+    end
+  end
+
   describe "mix objects" do
     test "an object a current root names survives" do
       objects = [object("v2/jason/1.4.4/aaa.tar.gz", 10)]
