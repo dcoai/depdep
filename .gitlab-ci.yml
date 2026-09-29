@@ -132,6 +132,11 @@ profile-instance-check:
     - apt-get update
     - apt-get install -y --no-install-recommends git curl
     - mix local.hex --force && mix local.rebar --force
+    # Repeated, not inherited: a job's `before_script` REPLACES the default's,
+    # so the fetch there does not reach this job (#124). It passed once on a
+    # cache hit, which is exactly why the line has to be here — a cache is an
+    # optimisation and must never be load-bearing for correctness.
+    - mix deps.get
     - |
       for _ in $(seq 1 60); do
         curl -sf http://s3:9090/ > /dev/null 2>&1 && break
@@ -203,6 +208,9 @@ reclamation:
   before_script:
     - apt-get update && apt-get install -y --no-install-recommends git curl
     - mix local.hex --force && mix local.rebar --force
+    # See the note in apt-round-trip: an overriding `before_script` replaces the
+    # default's, so this job must fetch for itself (#124).
+    - mix deps.get
     - |
       for _ in $(seq 1 60); do
         curl -s -o /dev/null http://s3:80/ && break

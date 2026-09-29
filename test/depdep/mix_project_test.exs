@@ -88,6 +88,44 @@ defmodule Depdep.MixProjectTest do
     end
   end
 
+  # #124. depdep gained its first dependency in #113, and `mix deps.get` went
+  # into the `default:` `before_script`. A job that defines its OWN
+  # `before_script` replaces the default's rather than extending it, so two jobs
+  # silently stopped fetching — and the pipeline stayed green once on a cache hit
+  # before failing. A cache is an optimisation and must never be load-bearing for
+  # correctness.
+  #
+  # A test rather than a CI-only check, so adding a job with its own
+  # `before_script` fails on a developer's machine rather than intermittently in
+  # a pipeline months later.
+  test "every before_script in CI fetches dependencies" do
+    blocks =
+      ".gitlab-ci.yml"
+      |> File.read!()
+      |> String.split(~r/^[ \t]*before_script:[ \t]*$/m)
+      |> Enum.drop(1)
+
+    assert blocks != [], "no before_script found — has .gitlab-ci.yml moved?"
+
+    for block <- blocks do
+      # The block's own lines: list items, comments and blanks, up to the first
+      # line that starts a sibling or parent key.
+      own =
+        block
+        |> String.split("\n")
+        |> Enum.drop_while(&(String.trim(&1) == ""))
+        |> Enum.take_while(fn line ->
+          trimmed = String.trim(line)
+          trimmed == "" or String.starts_with?(trimmed, ["-", "#"])
+        end)
+        |> Enum.join("\n")
+
+      assert own =~ "mix deps.get",
+             "a before_script does not fetch dependencies. A job overriding " <>
+               "before_script must repeat the fetch (#124):\n" <> own
+    end
+  end
+
   # The tarball is the package: build it and read back what it holds, so a
   # directory added to the tree does not silently ship or silently not.
   @tag :integration
