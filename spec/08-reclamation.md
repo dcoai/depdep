@@ -31,7 +31,7 @@ It is still a cost, which is why the three rails below exist.
   a push racing a listing is not swept.
 - **No current roots means no sweep.** A store nobody uses and a misconfigured
   invocation look identical from the outside, and one of them would delete
-  everything. `Depdep.Sweep.current_roots/2` decides, and refuses with a reason;
+  everything. `Depdep.Sweep.current_roots` decides, and refuses with a reason;
   the CLI adds that `--report` is where to look first. An unreadable timestamp
   counts as **current** here, the same fail-safe direction `#prefixes` states —
   an unreadable age must not silently shrink the live set, because a shrunken

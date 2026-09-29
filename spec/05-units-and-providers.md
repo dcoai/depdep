@@ -118,12 +118,14 @@ reachability — `spec/08-reclamation.md`.
 
 ## Archives {#archive}
 
-An object is a compressed tar. `Depdep.Archive.create/4` builds one and
-`Depdep.Archive.extract/3` restores it.
+An object is a compressed tar. `Depdep.Archive.create` builds one and
+`Depdep.Archive.extract` restores it.
+
+`Depdep.Archive.create_trees` is what walks the two trees into the archive.
 
 **An object carries `deps/` source as well as the `_build/` tree, and both or it
-recompiles.** `Depdep.Archive.trees/2` names the two trees and
-`Depdep.Archive.complete?/3` answers whether both are present: a dependency with
+recompiles.** `Depdep.Archive.trees` names the two trees and
+`Depdep.Archive.complete?` answers whether both are present: a dependency with
 a build but no source counts as **absent**, because Mix will rebuild it.
 
 A restore **replaces** existing trees, read-only files and leftovers included,

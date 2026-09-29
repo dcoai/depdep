@@ -93,7 +93,12 @@ Some public functions carry no behaviour a reader of this specification needs:
 accessors that exist so a test can reach a constant, and formatting helpers whose
 output is asserted by the tests that use them.
 
-Those are excused **by class** in `.surfex.exs`, never item by item, so a new
-helper falls into its class quietly while a new entry point matches no rule and
-needs a section. A class is for code whose only story is that it wires things
-together. The classes and their rules arrive with the gate, in #120.
+In the event, **no public item needed excusing**. Every one is described by a
+section, so `.surfex.exs` carries no `classes` and no `rules` — a stronger outcome
+than #112 planned for, and one that only became visible once every file was
+written.
+
+If that changes, the mechanism to reach for is an excusal **by class**, never item
+by item, so a new helper falls into its class quietly while a new entry point
+matches no rule and is a gap. A class is for code whose only story is that it
+wires things together.
