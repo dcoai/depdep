@@ -17,6 +17,7 @@ defmodule Depdep.KeyTest do
     # whether plug and igniter are resolved, because ash guards whole source
     # files on `Code.ensure_loaded?`. Absence must therefore be part of the key,
     # or the two builds collide and one consumer silently gets the other's.
+    @tag verifies: "absent-optional-positive"
     test "an unresolved optional dependency keys differently from a resolved one" do
       without = [hex("ash", "3.32.3", [{"plug", true}])]
       with_plug = [hex("ash", "3.32.3", [{"plug", true}]), hex("plug", "1.16.0", [])]
@@ -36,6 +37,7 @@ defmodule Depdep.KeyTest do
 
     # Why the hash must recurse rather than cover the whole lockfile: precision.
     # A whole-lock digest would invalidate every package on any change at all.
+    @tag verifies: "recursion-precision"
     test "bumping an unrelated dependency leaves a key alone" do
       before = [
         hex("ash", "3.32.3", ["spark"]),
@@ -93,6 +95,7 @@ defmodule Depdep.KeyTest do
       assert {:skip, _} = key([git("heroicons")], "heroicons")
     end
 
+    @tag verifies: "skip-propagates"
     test "a dependency on an unkeyable dependency is itself unkeyable" do
       lock = [hex("thing", "1.0.0", ["heroicons"]), git("heroicons")]
       assert {:skip, _} = key(lock, "thing")
@@ -106,6 +109,7 @@ defmodule Depdep.KeyTest do
   end
 
   describe "the schema prefix" do
+    @tag verifies: "schema-in-key"
     test "is in the key, so retiring the schema retires every object" do
       lock = [hex("ash", "3.32.3", [])]
       [{name, entry}] = lock
@@ -218,6 +222,7 @@ defmodule Depdep.KeyTest do
       refute keyed(lock, "jason", system_env: [{"CC", "clang"}]) == plain
     end
 
+    @tag verifies: "hex-key-stable-across-passes"
     test "a transitive hex dependency keys the same before and after Mix has loaded it" do
       lock = [hex("app", "1.0.0", ["jason"]), hex("jason", "1.4.4", [])]
       before = keys(lock)["jason"]
@@ -261,6 +266,7 @@ defmodule Depdep.KeyTest do
                key_under(lock, "jason", toolchain())
     end
 
+    @tag verifies: "native-only-native"
     test "the native fingerprint reaches a dependency with a native build, and only that one" do
       lock = [
         hex("bcrypt_elixir", "3.1.0", ["elixir_make"]),
