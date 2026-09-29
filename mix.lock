@@ -1,0 +1,3 @@
+%{
+  "surfex": {:git, "git@gitlab.conet.yarina.org:dco-tek/surfex.git", "1f046e2047e47c4d75121b831dc62c7e1f8ec2c4", [tag: "v0.4.0"]},
+}

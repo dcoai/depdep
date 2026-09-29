@@ -203,6 +203,31 @@ defmodule Depdep.MetresisTest do
     end
   end
 
+  # spec/01-goals-and-scope.md#failure-not-error. The store and the metrics are
+  # both optimisations over work that has already succeeded, so neither may cost
+  # a job its result. Nothing else in this suite pointed a post at an endpoint
+  # that is not there (#113).
+  describe "failure is not an error" do
+    @tag verifies: "failure-is-not-an-error"
+    test "an endpoint that refuses the connection is an error value, never a raise" do
+      configure(closed_port())
+
+      assert {:error, reason} = Metresis.post(run_map(), :pull)
+      assert is_binary(reason)
+      assert reason != ""
+    end
+  end
+
+  # A port nothing is listening on: bind one to have the OS choose a free
+  # number, then close it. Asking for a refusal by guessing a port number would
+  # be a test that fails when somebody happens to be using it.
+  defp closed_port do
+    {:ok, socket} = :gen_tcp.listen(0, [:binary, active: false])
+    {:ok, port} = :inet.port(socket)
+    :ok = :gen_tcp.close(socket)
+    port
+  end
+
   describe "labels" do
     test "absent CI variables are omitted rather than filled with a lie" do
       labels = Metresis.labels(:pull)
