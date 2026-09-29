@@ -37,13 +37,35 @@ defmodule Depdep.MixProject do
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
 
-  # DELIBERATELY EMPTY, AND IT HAS TO STAY THAT WAY.
+  # NOTHING HERE MAY REACH A CONSUMER, AND NOTHING HERE MAY BE NEEDED TO RUN.
   #
-  # Depdep runs BEFORE `mix deps.get` — that is the whole point of it. A
-  # dependency here would have to be fetched by the machinery this exists to
-  # get in front of. Signature v4 is about sixty lines; `:httpc` and `:erl_tar`
-  # ship with OTP. See README, "Why no dependencies".
-  defp deps, do: []
+  # Depdep runs BEFORE `mix deps.get` — that is the whole point of it — so a
+  # runtime dependency would have to be fetched by the very machinery this
+  # exists to get in front of. Signature v4 is about sixty lines; `:httpc` and
+  # `:erl_tar` ship with OTP. See README, "Why no dependencies".
+  #
+  # That constraint has not moved. What #113 changed is the assertion guarding
+  # it: `mix_project_test.exs` used to check that this list was empty, which is
+  # a proxy, and now checks what the list is actually forbidden to contain,
+  # which is stricter — an empty list satisfies both, and `{:jason, "~> 1.4"}`
+  # fails the second where a hand-waved exception could have passed the first.
+  #
+  # `only: [:dev, :test]` is load-bearing rather than hygiene: such deps are not
+  # transitive, so nothing here reaches anyone who depends on depdep, and hex
+  # metadata leaves them out. `runtime: false` keeps them out of the
+  # application. Neither is on the pre-`deps.get` path.
+  defp deps do
+    [
+      # `spec/` is held to the code it describes: which sections and which public
+      # items somebody confirmed belong together, and at which versions (#112).
+      # A build-time tool with no dependencies of its own.
+      {:surfex,
+       git: "git@gitlab.conet.yarina.org:dco-tek/surfex.git",
+       tag: "v0.4.0",
+       only: [:dev, :test],
+       runtime: false}
+    ]
+  end
 
   # What a hex package of depdep carries, listed rather than defaulted so the set
   # is a decision: `priv/` because the metresis profile lives there and a task

@@ -1,5 +1,7 @@
-# Depdep has no dependencies, so there is nothing to fetch and nothing to cache.
-# The whole pipeline is compile + format + test.
+# Depdep has no RUNTIME dependencies (spec/01-goals-and-scope.md#zero-runtime-deps)
+# and one dev/test one: `surfex`, which holds `spec/` to the code it describes
+# (#112). So there is now something to fetch and something to cache — the
+# pipeline is fetch + compile + format + test + the relation check.
 default:
   image: hexpm/elixir:1.20.4-erlang-29.0.5-debian-bookworm-20260824
   interruptible: true
@@ -10,6 +12,27 @@ default:
     # and `git fsck` rejecting it, so install git rather than exclude them.
     - apt-get update && apt-get install -y --no-install-recommends git
     - mix local.hex --force && mix local.rebar --force
+    # `surfex` is declared with a `git@host:` URL, which is what a developer
+    # needs and what a runner cannot use: there is no ssh key in this container.
+    # Rewrite both spellings of this host to an https URL carrying
+    # `CI_JOB_TOKEN`, which is per-job and ephemeral, so nothing long-lived is
+    # stored. It resolves only because `dco-tek/depdep` is on `dco-tek/surfex`'s
+    # inbound job-token allowlist, which had to be granted once.
+    #
+    # `--add` on the second line is load-bearing: `insteadOf` is multi-valued,
+    # and a plain `git config` on the same key would replace the first rewrite
+    # instead of joining it. Taken as extc and extla wrote it.
+    - git config --global url."https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/".insteadOf "https://${CI_SERVER_HOST}/"
+    - git config --global --add url."https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/".insteadOf "git@${CI_SERVER_HOST}:"
+    - mix deps.get
+
+# `deps/` is one git checkout pinned by `mix.lock`; `_build` is deliberately not
+# cached, because a stale build directory is how a green pipeline hides a
+# compile error.
+cache:
+  key:
+    files: [mix.lock]
+  paths: [deps/]
 
 variables:
   MIX_ENV: test
@@ -36,6 +59,29 @@ test:
     # what hex accepts, so `mix hex.publish` cannot be the first thing to find
     # a field missing (#75). Builds a tarball and writes nothing else.
     - mix hex.build --output /tmp/depdep-package.tar
+
+# `spec/` held to the code it describes (#112, #113). Its own job rather than a
+# line in `test:`, so a red relation reads as "the spec and the code disagree"
+# instead of hiding among compile and test output.
+#
+# A HARD gate from the start — but note what it currently gates. `.surfex.exs`
+# carries no `require:` and no `triangle:`, so this checks that every recorded
+# relation still holds and that `RELATIONS.md` matches, NOT that every module is
+# described. #120 adds those keys once there is a spec to satisfy them; turning
+# them on now would make this job red for all thirty modules from the first
+# commit, and a permanently red gate is one nobody reads.
+surfex:
+  stage: test
+  script:
+    # Every relation in the log: still current, or changed and awaiting a
+    # judgement (`mix surfex.confirm`, one named id at a time).
+    - mix surfex.status
+    # RELATIONS.md is the committed record. Regenerating must be a no-op; a
+    # difference means somebody edited the golden or forgot to regenerate it.
+    - mix surfex.goldens
+    # The log is an append-only chain. This catches an edited line, a missing
+    # parent, or a chain broken by a bad merge resolution.
+    - mix surfex.log --verify
 
 # What the instance actually holds, against what this depdep ships (#103).
 #

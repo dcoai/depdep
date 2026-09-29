@@ -99,7 +99,30 @@ fetched by the very machinery it exists to get in front of. AWS Signature v4 is
 about sixty lines, and `:httpc` and `:erl_tar` ship with OTP, so the whole client
 is written out here rather than taken from a library.
 
-This is a hard constraint, not a preference. See `mix.exs`.
+This is a hard constraint, not a preference, and it is stated normatively in
+`spec/01-goals-and-scope.md`. What it forbids is a **runtime** dependency. Depdep
+does carry one build-time dependency — surfex, which holds the specification to
+the code it describes — declared `only: [:dev, :test], runtime: false`. Such
+dependencies are not transitive, so nothing reaches a project that depends on
+depdep, and a published package of depdep declares no dependencies at all. Two
+tests in `test/depdep/mix_project_test.exs` hold both halves of that.
+
+## The specification
+
+`spec/` is the normative description of depdep: the object key format and its
+schema versioning, the store's layout, the providers, the run, the metric
+vocabulary, and the reclamation rules. `spec/README.md` says how it is organised
+and how to add to it.
+
+This README is documentation — what depdep does, how to configure it, and why the
+design is what it is. `spec/` is the contract. Where the two disagree, `spec/`
+wins and the README is wrong.
+
+Sections are held to the code they describe: each names its functions, and a
+recorded relation remembers the versions both ends had when somebody last
+confirmed they matched. Change either end and the relation dangles until someone
+reads both again. `RELATIONS.md` is the committed record, and CI fails on a
+relation nobody has looked at.
 
 ## Failure is not an error
 
