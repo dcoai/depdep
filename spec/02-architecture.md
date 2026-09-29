@@ -78,9 +78,14 @@ inputs as arguments and touch nothing. The rules worth being certain about are
 therefore testable without a store, a network or a clock.
 
 The split has a cost, and it is recorded rather than hidden: a decision that
-stays in the impure half can end up untested, which is what happened to
-reclamation's most important rail (`spec/08-reclamation.md#rails`, #126). The
-answer is to move such a decision into the pure half, not to abandon the split.
+stays in the impure half can end up untested. That is what happened to
+reclamation's most important rail — the refusal to sweep a store with no current
+roots sat in `Depdep.CLI.Operator`, which talks to a store, while every other
+sweep rule sat in the pure module and was tested. It had no test at all (#126).
+
+The answer taken was to move the decision into the pure half
+(`Depdep.Sweep.current_roots/2`), not to abandon the split. A rule that decides
+whether to delete belongs beside the rules that decide what to delete.
 
 ## What is deliberately not described here {#not-described}
 
