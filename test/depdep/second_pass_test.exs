@@ -13,6 +13,7 @@ defmodule Depdep.SecondPassTest do
   @unkeyable {:skip, "git dependency — the lock carries no dependency list"}
 
   describe "plan/2" do
+    @tag verifies: "second-pass-one-entry"
     test "a unit the first pass skipped is transferred, whatever it resolves to now" do
       first = [seen("forked", :skipped), seen("dependent", :skipped)]
       units = [unit("forked", @keyed), unit("dependent", @unkeyable)]
