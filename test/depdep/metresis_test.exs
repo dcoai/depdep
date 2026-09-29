@@ -266,6 +266,7 @@ defmodule Depdep.MetresisTest do
   end
 
   describe "idempotency_key/3 is pure" do
+    @tag verifies: "metresis-idempotency-key"
     test "the same job retried gives the same key" do
       labels = %{"pipeline" => "1742", "job" => "10509"}
       assert Metresis.idempotency_key(labels, :pull, 0) == "depdep-1742-10509-pull-0"

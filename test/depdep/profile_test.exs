@@ -25,6 +25,7 @@ defmodule Depdep.ProfileTest do
     refute File.read!("lib/depdep/profile.ex") =~ "__DIR__"
   end
 
+  @tag verifies: "profile-holds-the-code"
   test "the shipped document agrees with the code, both ways" do
     assert Profile.check() == :ok
   end
