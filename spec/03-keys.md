@@ -101,6 +101,15 @@ for each declared child, sorted:
   otherwise           -> ("present", name, key(child))
 ```
 
+`Depdep.Deps.read/2` supplies the per-dependency view every part above is taken
+from: `Depdep.Deps.mix_view/2` asks Mix, `Depdep.Deps.converged/2` is the converge
+itself, and `Depdep.Deps.from_lock` joins Mix's answer to the lock.
+`Depdep.Json.encode/1` is the canonical encoder the digests rest on — canonical
+because a digest over a map whose key order varied would not be a key at all.
+
+`Depdep.keys_for/3` is the entry point that puts those together for one project,
+and `Depdep` itself is the module a reader starts from.
+
 The dependency's own source comes from its lock entry:
 `Depdep.Lock.version/1`, `Depdep.Lock.inner_checksum/1` and
 `Depdep.Lock.build_tools/1`, read from the map `Depdep.Lock.read/1` returns.

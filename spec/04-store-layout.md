@@ -69,17 +69,21 @@ library (`spec/01-goals-and-scope.md#zero-runtime-deps`).
 |---|---|
 | `Depdep.S3.head/2` | `:hit`, `:miss` or `{:error, reason}` — never a raise, so a flaky store degrades to a compile |
 | `Depdep.S3.get/3` | streams to a destination path, so a large object never sits in memory |
-| `Depdep.S3.put/4` | uploads with optional metadata |
+| `Depdep.S3.put` | uploads with optional metadata |
 | `Depdep.S3.metadata/2` | reads an object's metadata without its body |
-| `Depdep.S3.list/2` | lists a prefix, following continuation tokens |
+| `Depdep.S3.list` | lists a prefix, following continuation tokens |
 | `Depdep.S3.delete/2` | removes one object; reclamation only |
 
 `Depdep.S3.delete/2` is the one destructive call, and a pipeline identity should
 not hold the credential that can make it — see `spec/08-reclamation.md`.
 
-A listing is paged. `Depdep.S3.list/2` follows the continuation token until the
+A listing is paged. `Depdep.S3.list` follows the continuation token until the
 listing is complete, so a caller never sees a truncated set and mistakes it for
 the whole store.
+
+`Depdep.S3.start/0` configures `:httpc` to match the concurrency in force. The
+obvious way to do that is wrong, and the symptom of getting it wrong is a run
+that reports its concurrency honestly and still transfers serially.
 
 `Depdep.S3.encode_path/1` and `Depdep.S3.canonical_query/1` are the two places
 signing is easy to get subtly wrong: a key holding a reserved character must be
@@ -95,7 +99,7 @@ then the request is authorised rather than answered 403
 
 ## Compile-time configuration {#compile-config}
 
-`Depdep.Config.read/3` returns `%{app_string => digest}` for a project.
+`Depdep.Config.read` returns `%{app_string => digest}` for a project.
 
 **Only `config/config.exs` and the files it imports are compile-time.**
 `config/runtime.exs` is by definition not, and is never read.
@@ -122,7 +126,7 @@ dependency's key.
 
 ## Which projects depdep operates on {#layout}
 
-`Depdep.Layout.projects/2` resolves the members, in this order, so the common
+`Depdep.Layout.projects` resolves the members, in this order, so the common
 cases need no configuration:
 
 1. **Explicitly named.** `--project DIR`, repeatable. Always wins.

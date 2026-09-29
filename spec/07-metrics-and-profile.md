@@ -13,7 +13,9 @@ The bucket vocabulary these metrics report is defined in
 
 ## What a run measures {#metrics}
 
-`Depdep.Metrics.to_map/3` is the run's measurement. Two kinds of number.
+`Depdep.Metrics.to_map/3` is the run's measurement, built from
+`Depdep.Metrics.Phase` (one direction's work for one provider) and
+`Depdep.Metrics.Unit` (one unit's outcome). Two kinds of number.
 
 **Per run and per provider** — how long the run took and how much of the lock it
 settled: `Depdep.Metrics.bytes/1` for volume,
@@ -50,9 +52,9 @@ Each unit appears once, in the bucket the run ended with — the property
 A **profile** is the document that tells metresis what depdep's metrics mean:
 their names, types, units, polarity, guidance prose, and a starter dashboard.
 `Depdep.Profile.read/0` reads it, `Depdep.Profile.path/0` locates it, and
-`Depdep.Profile.vocabulary/0` lists the names it defines.
+`Depdep.Profile.vocabulary` lists the names it defines.
 
-`Depdep.Profile.hash/0` is the profile's identity: a SHA-256 over its canonical
+`Depdep.Profile.hash` is the profile's identity: a SHA-256 over its canonical
 JSON encoding. The hash, not the version, is what a post carries — a hash is what
 a machine can compare exactly.
 
@@ -62,7 +64,7 @@ instance holds, **by vocabulary rather than by hash**, so a difference is
 reported as which names are missing on which side rather than as two unequal
 hexadecimal strings.
 
-`Depdep.Profile.check/0` and `Depdep.Profile.check/1` hold the document to what
+`Depdep.Profile.check` hold the document to what
 the code emits, **in both directions**: a metric posted but undefined would
 register bare on the instance, and a metric defined but never posted is a claim
 the code does not make.
@@ -91,7 +93,7 @@ Nothing loops. A second 428 of any kind is one warning line and done, and every
 outcome but a transport failure is `:ok` or a warning — because the numbers are a
 by-product of work that already succeeded.
 
-`Depdep.Metresis.post/2` returns `:ok`, `:disabled`, `{:warn, message}` or
+`Depdep.Metresis.post` returns `:ok`, `:disabled`, `{:warn, message}` or
 `{:error, reason}`, and never raises. The three 428 kinds are distinguished in
 what it warns:
 

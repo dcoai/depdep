@@ -64,12 +64,19 @@ test:
 # line in `test:`, so a red relation reads as "the spec and the code disagree"
 # instead of hiding among compile and test output.
 #
-# A HARD gate from the start — but note what it currently gates. `.surfex.exs`
-# carries no `require:` and no `triangle:`, so this checks that every recorded
-# relation still holds and that `RELATIONS.md` matches, NOT that every module is
-# described. #120 adds those keys once there is a spec to satisfy them; turning
-# them on now would make this job red for all thirty modules from the first
-# commit, and a permanently red gate is one nobody reads.
+# A HARD gate, and since #120 it gates the whole claim:
+#
+#   * every recorded relation still holds, or somebody has confirmed it again;
+#   * `require: [code: [:implements]]` — every public item is described by a
+#     section, so adding a function without describing it fails here;
+#   * `require: [test_hint: [:verifies]]` — every test hint has a test;
+#   * `RELATIONS.md` matches, and the log's chain verifies.
+#
+# `triangle:` is deliberately NOT `:fail` — see `spec/10-decisions.md#the-gate`
+# and the note in `.surfex.exs`. It is reported in this job's output instead.
+#
+# Both `require:` keys were proven to bite before being set: an undescribed
+# public function and an unverified hint each fail the check.
 surfex:
   stage: test
   script:

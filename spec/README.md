@@ -89,11 +89,18 @@ log of confirmations nobody read is worth less than no log at all.
 both sides' *source* changes and regenerate it with `mix surfex.goldens --write`
 — never hand-merge its rows.
 
-## The gate arrives in stages
+## The gate
 
-`.surfex.exs` carries no `require:` and no `triangle:` yet, and #120 adds both.
-Turning them on before the spec has content would fail the check for all thirty
-modules from the first commit and keep failing for the length of the effort,
-which is how a gate teaches people to ignore it. Each work item under
-#112 leaves CI green, and the gate tightens when there is something for it to
-hold.
+Set in #120, and it gates the whole claim:
+
+- **every recorded relation still holds**, or somebody has confirmed it again;
+- **`require: [code: [:implements]]`** — every public item is described by a
+  section, so adding a function without describing it fails CI;
+- **`require: [test_hint: [:verifies]]`** — every test hint has a test.
+
+`triangle:` is deliberately **not** `:fail`. Closing the triangle would require
+every section's verifying test to call every function that section cites, which
+for a section citing twelve functions, or for the architecture map, means hollow
+tests — and hollow tests are how a gate teaches people to confirm without
+reading. It is reported instead. The reasoning is
+`spec/10-decisions.md#the-gate`.

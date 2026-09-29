@@ -46,6 +46,9 @@ One mode per run.
 | `--git-mirror-dir DIR` | string | git | `.depdep/git` |
 | `--metrics PATH` | string | all | — |
 
+`Depdep.CLI.switches/0` is the parser's own list, public so this table can be
+held to it in both directions rather than drifting from it.
+
 ```test cli-switches-documented
 given the switches the parser accepts
 then every one appears in the usage text
