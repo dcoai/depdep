@@ -15,6 +15,7 @@ defmodule Depdep.ArchiveTest do
     assert Depdep.Archive.trees("ash", "_build/test") == ["deps/ash", "_build/test/lib/ash"]
   end
 
+  @tag verifies: "archive-both-trees"
   test "a dependency with a build but no source counts as absent" do
     dir = tmp_dir()
     File.mkdir_p!(Path.join(dir, "_build/test/lib/ash"))

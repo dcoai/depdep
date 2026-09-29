@@ -123,6 +123,7 @@ defmodule Depdep.LayoutTest do
 
     # The reason a prefix is matched segment-wise rather than as a string: a
     # partial-segment match would drop a member nobody asked to exclude.
+    @tag verifies: "layout-segment-boundaries"
     test "matches whole segments, so `tools` does not drop `tools_vendor`" do
       root = tmp_dir()
       for m <- ["tools/cli", "tools_vendor/x"], do: write_project(root, m)

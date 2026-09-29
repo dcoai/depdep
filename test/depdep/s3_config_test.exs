@@ -93,6 +93,7 @@ defmodule Depdep.S3ConfigTest do
       end
     end
 
+    @tag verifies: "store-config-one-form"
     test "both forms at once is refused, naming both" do
       separate()
       System.put_env("DEPDEP_STORE", "s3://k@h/b")

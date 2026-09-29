@@ -173,6 +173,7 @@ defmodule Depdep.S3Test do
     # encodes once and hands the SAME string to `sign/5`, so this asserts the
     # observable half — that the URL carries the encoded form — and the other
     # half holds by construction.
+    @tag verifies: "s3-reserved-characters"
     test "is the encoded key, for a name with reserved characters" do
       content = "package bytes"
       path = Path.join(System.tmp_dir!(), "depdep-enc-#{System.unique_integer([:positive])}")

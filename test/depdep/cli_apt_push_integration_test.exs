@@ -41,6 +41,7 @@ defmodule Depdep.CLIAptPushIntegrationTest do
     )
   end
 
+  @tag verifies: "apt-first-sighting"
   test "a new .deb is uploaded and the run exits 0", ctx do
     {output, status} =
       depdep(ctx.base, ctx.port, ["--push", "--provider", "apt", "--apt-cache-dir", ctx.archives])
