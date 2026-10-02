@@ -12,18 +12,15 @@ default:
     # and `git fsck` rejecting it, so install git rather than exclude them.
     - apt-get update && apt-get install -y --no-install-recommends git
     - mix local.hex --force && mix local.rebar --force
-    # `surfex` is declared with a `git@host:` URL, which is what a developer
-    # needs and what a runner cannot use: there is no ssh key in this container.
-    # Rewrite both spellings of this host to an https URL carrying
-    # `CI_JOB_TOKEN`, which is per-job and ephemeral, so nothing long-lived is
-    # stored. It resolves only because `dco-tek/depdep` is on `dco-tek/surfex`'s
-    # inbound job-token allowlist, which had to be granted once.
+    # `surfex` comes from hex (#129), so there is no credential rewrite here. It
+    # used to be a `git@host:` dependency, which a runner cannot fetch — no ssh
+    # key in the container — and that needed two `url.…insteadOf` lines plus
+    # `dco-tek/depdep` on `dco-tek/surfex`'s inbound job-token allowlist, granted
+    # by hand in #113 and invisible in this repository.
     #
-    # `--add` on the second line is load-bearing: `insteadOf` is multi-valued,
-    # and a plain `git config` on the same key would replace the first rewrite
-    # instead of joining it. Taken as extc and extla wrote it.
-    - git config --global url."https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/".insteadOf "https://${CI_SERVER_HOST}/"
-    - git config --global --add url."https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/".insteadOf "git@${CI_SERVER_HOST}:"
+    # That grant is deliberately NOT revoked: another project may rely on it, and
+    # removing an allowlist entry on a sibling is not depdep's call. depdep simply
+    # no longer needs it.
     - mix deps.get
 
 # `deps/` is one git checkout pinned by `mix.lock`; `_build` is deliberately not
