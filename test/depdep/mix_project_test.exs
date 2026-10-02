@@ -33,14 +33,25 @@ defmodule Depdep.MixProjectTest do
 
   # The escript is installed by hand, so its absence is the likeliest way
   # `mix docs` fails on a fresh machine; the failure has to say what to run.
+  #
+  # The throwaway `MIX_HOME` needs hex installed into it, and that is new (#129).
+  # While surfex was a GIT dependency its SCM was built into Mix, so an empty home
+  # was enough. A HEX dependency's SCM comes from hex itself, so Mix cannot even
+  # load the project without it and stops to ask whether to install it — which in
+  # CI means blocking on stdin until the test times out. A fresh machine for
+  # depdep has hex by definition (nothing could be fetched without it), so
+  # installing it here models the intended scenario rather than working around it:
+  # a machine with hex and no ex_doc escript.
   @tag :integration
   test "mix docs without the escript names the install command" do
     home = Path.join(System.tmp_dir!(), "depdep-mixhome-#{System.unique_integer([:positive])}")
     File.mkdir_p!(home)
     on_exit(fn -> File.rm_rf!(home) end)
+    env = [{"MIX_HOME", home}]
 
-    assert {output, 1} =
-             System.cmd("mix", ["docs"], env: [{"MIX_HOME", home}], stderr_to_stdout: true)
+    assert {_, 0} = System.cmd("mix", ["local.hex", "--force"], env: env, stderr_to_stdout: true)
+
+    assert {output, 1} = System.cmd("mix", ["docs"], env: env, stderr_to_stdout: true)
 
     assert output =~ "run: mix escript.install hex ex_doc --force"
   end

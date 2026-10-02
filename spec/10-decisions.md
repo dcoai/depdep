@@ -138,6 +138,23 @@ The triangle is therefore **reported, not gated**. 110 gaps are visible in every
 `mix surfex.status`, and closing one where it is genuinely closeable is ordinary
 work.
 
+**Since surfex 0.5 the same gap has a second name, and it is not a second
+problem** (#129). 0.5 validates an `implements` relation by what a test *did* —
+failed, then passed against the code — and refuses to let one be asserted by hand.
+Carrying `implements` through a test requires that test to verify the section
+*and* call the implementing code, which is the triangle. So depdep's 177
+`implements` relations report as `unvalidated: 177`, which is the same 110 gaps
+counted per relation instead of per section.
+
+`adoption: :trust` and a one-shot `mix surfex.baseline` record *why* the suite is
+trusted — 392 tests that already pass, written beside this code, with nothing left
+to discriminate — rather than leaving the fact silent. `baseline:` is left
+reported, not `:fail`, for the reason above: the alternative is still hollow
+tests.
+
+A reader finding `unvalidated: 177` and 110 triangle gaps should read them as one
+fact. There is no second decision entry for it, deliberately.
+
 ## What extraction found {#what-extraction-found}
 
 Recorded because it is the evidence for whether writing this was worth it. Six

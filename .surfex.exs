@@ -33,7 +33,25 @@
 # to confirm without reading — the failure `guides/writing-specs.md` §2 exists to
 # prevent. The triangle is reported in every run instead, and closing a gap where
 # it is genuinely closeable is ordinary work.
+# ## Adoption (#129)
+#
+# `:trust` takes the suite as it stands, once. surfex 0.5 validates an
+# `implements` relation by what a test DID — failed, then passed against the code
+# — and refuses to let a human assert one by hand. depdep's 392 tests already
+# pass, so they cannot honestly go red against code they were written beside;
+# there is nothing for them to discriminate. `mix surfex.baseline` records that
+# trust explicitly, with a note saying why, rather than leaving every relation
+# silently unvalidated.
+#
+# Trust only shrinks from here: an edited test's new version is not trusted, and a
+# test's first real red→green moves its relations from `baseline` to `evidence`.
+#
+# `baseline:` is left at its default — REPORTED, not `:fail`. Same judgement as
+# #120 made on `triangle:`, and for the same reason: the 110 triangle gaps and the
+# 177 unvalidated relations are one fact under two names, and gating on it would
+# demand hollow tests. See `spec/10-decisions.md#the-gate`.
 [
+  adoption: :trust,
   sources: ["spec/[0-9]*.md"],
   tests: ["test/**/*_test.exs"],
   goldens: [:status],

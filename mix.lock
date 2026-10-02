@@ -1,3 +1,3 @@
 %{
-  "surfex": {:git, "git@gitlab.conet.yarina.org:dco-tek/surfex.git", "1f046e2047e47c4d75121b831dc62c7e1f8ec2c4", [tag: "v0.4.0"]},
+  "surfex": {:hex, :surfex, "0.5.16", "ce9143ca9fbd17066047622831901e1e7151fa13c9c82ecfa61d17f52c5b5568", [:mix], [], "hexpm", "c7ae2002e5bff69578178451112a956587c4bd1ecc60203154a441a1e9c14773"},
 }

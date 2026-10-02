@@ -59,11 +59,7 @@ defmodule Depdep.MixProject do
       # `spec/` is held to the code it describes: which sections and which public
       # items somebody confirmed belong together, and at which versions (#112).
       # A build-time tool with no dependencies of its own.
-      {:surfex,
-       git: "git@gitlab.conet.yarina.org:dco-tek/surfex.git",
-       tag: "v0.4.0",
-       only: [:dev, :test],
-       runtime: false}
+      {:surfex, "~> 0.5.16", only: [:dev, :test], runtime: false}
     ]
   end
 
