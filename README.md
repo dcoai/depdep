@@ -287,7 +287,7 @@ Depdep runs *before* `mix deps.get`, so it cannot be a dependency in your
 `mix.exs` — that would be circular. Commit this as `scripts/depdep.exs`:
 
 ```elixir
-Mix.install([{:depdep, "~> 0.7"}])
+Mix.install([{:depdep, "~> 0.8"}])
 
 Depdep.CLI.main(System.argv())
 ```
@@ -295,7 +295,7 @@ Depdep.CLI.main(System.argv())
 `Mix.install/2` fetches into its own cache, independent of your project's
 `deps/`, so there is no ordering problem and no root Mix project required.
 
-**Until depdep is on hex.pm — and as of v0.7.0 it is not; publishing is a
+**Until depdep is on hex.pm — and as of v0.8.0 it is not; publishing is a
 separate decision from tagging — install it from git instead.** The git form
 also stays the way to run a commit that has no release yet:
 
@@ -309,7 +309,7 @@ url =
     token -> "https://gitlab-ci-token:#{token}@gitlab.example.com/group/depdep.git"
   end
 
-Mix.install([{:depdep, git: url, tag: "v0.7.0"}])
+Mix.install([{:depdep, git: url, tag: "v0.8.0"}])
 
 Depdep.CLI.main(System.argv())
 ```

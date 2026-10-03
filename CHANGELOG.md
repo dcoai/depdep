@@ -4,16 +4,62 @@ What changed for a user of depdep, per release. Each version is a git tag;
 the four earliest also carry GitLab release notes, from which these entries
 are condensed. Issue numbers are dco-tek/depdep's.
 
-## Unreleased
+## v0.8.0 — 2026-10-03
 
-### Added
+**No object path changes, so no refill.** Keys are unchanged; schema stays `v3`.
 
-- **`--explain-rebuilt`** (#134): for each restore Mix refuses, print what the
-  build's manifest recorded against what Mix expected — the Elixir and OTP pair,
-  the SCM, and the lock entry with the index of the first differing tuple element
-  named. Mix's own sentence, "the dependency build is outdated", covers both a
-  differing lock and an unreadable manifest and distinguishes neither, which is
-  why #122 went three days without a mechanism. Off by default.
+A release about being able to say *why*. depdep could report that Mix refused a
+restore and relay Mix's sentence; it could not say which input the key missed,
+even while holding the `%Mix.Dep{}` and sitting beside the manifest. It can now.
+It also has a specification, and CI fails on a claim nobody has checked.
+
+- **`--explain-rebuilt`** (#134, #135): for each restore Mix refuses, print what
+  the build's manifest recorded against what Mix expected — the Elixir and OTP
+  pair, the SCM, and the lock entry with **the index of the first differing tuple
+  element** named. Mix's own sentence, *"the dependency build is outdated"*,
+  covers both a differing lock and an unreadable manifest and distinguishes
+  neither. An absent manifest is reported as absent, which that sentence cannot
+  say. Off by default, and silent when nothing is refused.
+
+- **No more `redefining module` warnings** (#109, #132): `Mix.Project.in_project/4`
+  caches by app atom, and Mix's converge loads a path dependency under its real
+  app name — so asking about that directory as a *member* recompiled its
+  `mix.exs` over the already-loaded module. One warning per path-dependency
+  member per run: nine on a ten-member poncho, about fifty lines a job. Measured
+  on `dco-tek/bizex`: **3 → 0**. This matters beyond tidiness, because stderr is
+  where `restored, but Mix would rebuild it` goes.
+
+- **Reclamation's third rail is fixed and tested** (#126). The refusal to sweep a
+  store with no current roots — the rail that guards against the *operator* being
+  wrong rather than the clock — had no test, and the helper it used treated an
+  **unparseable root timestamp as stale** where `spec/08-reclamation.md#prefixes`
+  says recent. A root whose age could not be read was dropped from the live set,
+  exposing every object it protected. It now counts as current, and `--report`
+  uses the same rule as `--sweep` so the report cannot disagree with the delete
+  it precedes.
+
+- **depdep has a specification** (#112): `spec/`, twelve numbered files, with the
+  store's key format written down as the compatibility contract it has always
+  been. It is held to the code by `surfex` relations and gated in CI, so a public
+  function nobody described, or a test hint nobody verified, fails the build.
+  Writing it found six defects, two of them in the specification itself.
+
+- **surfex comes from hex** (#129) at `~> 0.5.16`, which removed the
+  `CI_JOB_TOKEN` rewrite depdep's pipeline needed for an ssh-declared git
+  dependency. It remains `only: [:dev, :test], runtime: false`: a published
+  package of depdep still declares no dependencies, and a test reads
+  `requirements` out of the built tarball to prove it.
+
+### Known, and not fixed here
+
+- **#122 and #110 are open.** In a poncho whose members share hex dependencies,
+  or whose members are each other's path dependencies, v0.7.0 and v0.8.0 refuse
+  more restores than v0.6.0 did. Correctness is not at risk — a refused restore
+  is recompiled and counted as a miss — but the store saves less than it reports.
+  `--explain-rebuilt` exists to find the mechanism; three hypotheses have been
+  disproven by measurement so far.
+- **#123 is open**: a restored git dependency keeps the pusher's `origin`, so two
+  projects spelling the same repository differently see a lock mismatch.
 
 
 ## v0.7.0 — 2026-09-28
