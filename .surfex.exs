@@ -65,6 +65,20 @@
 # falls into it quietly while a new decision matches no rule and is a gap.
 [
   classes: [
+    # #138. A module item's own story is its functions', and each of those is cited
+    # where it is described. The architecture map used to describe modules as
+    # groupings, but a map relation cannot be validated — no test verifies "these
+    # modules are the run's shape" — so it dangles for ever and drowns the signal
+    # from relations that can go current.
+    #
+    # The gate stays meaningful: every public FUNCTION must still be described or
+    # excused, so a new module arrives with undescribed functions and is caught
+    # there. The hole this leaves is a module with no public functions at all,
+    # which would be excused silently; `spec/02-architecture.md#not-described`
+    # records that.
+    {"module container",
+     "A module is a namespace. The behaviour the spec describes is its functions', " <>
+       "each cited where it is described; the module item carries none of its own."},
     {"halting entry point",
      "It calls System.halt/1, so no test can call it and then assert. What it " <>
        "decides is the spec's subject and is cited there; this wires those " <>
@@ -75,7 +89,8 @@
     # than this one function: an entry point is named by convention, so another
     # added later falls into the class quietly, which is what "by class, never by
     # item" means.
-    %{class: "halting entry point", kinds: [:function], name: ~r/^main\/\d+$/}
+    %{class: "halting entry point", kinds: [:function], name: ~r/^main\/\d+$/},
+    %{class: "module container", kinds: [:module]}
   ],
   adoption: :trust,
   sources: ["spec/[0-9]*.md"],
