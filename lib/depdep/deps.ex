@@ -164,11 +164,22 @@ defmodule Depdep.Deps do
   SCM lives there.
   """
   def converged(project_dir, env) do
-    Member.ask(project_dir, env, fn ->
-      Mix.Local.append_archives()
-      Mix.Dep.clear_cached()
-      Mix.Dep.Converger.converge(env: env)
-    end)
+    deps =
+      Member.ask(project_dir, env, fn ->
+        Mix.Local.append_archives()
+        Mix.Dep.clear_cached()
+        Mix.Dep.Converger.converge(env: env)
+      end)
+
+    # Mix loaded every path dependency's project under its own app name. Recording
+    # that means a later question about the same directory — as a MEMBER, in a
+    # poncho where members are each other's path dependencies — reuses Mix's cache
+    # instead of recompiling the `mix.exs` and printing `redefining module` (#132).
+    for %Mix.Dep{scm: Mix.SCM.Path, app: app, opts: opts} <- deps, dest = opts[:dest] do
+      Member.remember(dest, app)
+    end
+
+    deps
   end
 
   # The fields used, and nothing else, so a change in `%Mix.Dep{}` is one

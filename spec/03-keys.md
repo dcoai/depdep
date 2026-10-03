@@ -107,6 +107,12 @@ itself, and `Depdep.Deps.from_lock` joins Mix's answer to the lock.
 `Depdep.Json.encode/1` is the canonical encoder the digests rest on — canonical
 because a digest over a map whose key order varied would not be a key at all.
 
+```test the-converge-is-mixs-own-list
+given a project with a path dependency
+when the converge is asked
+then it returns Mix's own dependency structs, the path dependency among them
+```
+
 `Depdep.keys_for/3` is the entry point that puts those together for one project,
 and `Depdep` itself is the module a reader starts from.
 
