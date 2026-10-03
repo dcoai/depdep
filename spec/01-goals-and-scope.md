@@ -74,8 +74,7 @@ is an optimisation. Neither may cost a job its result.
 two and leaves the exit code alone: a 4xx, a 5xx, a timeout or a refused
 connection is a line on stderr and nothing more.
 
-`Depdep.CLI.main/1` exits non-zero for exactly two conditions, and neither is a
-store failure:
+A run exits non-zero for exactly two conditions, and neither is a store failure:
 
 - a **malformed invocation**, which exits 2;
 - a dependency that **does not compile** under `--compile-deps`, which exits with
@@ -85,9 +84,28 @@ store failure:
 No store failure, no metresis failure and no unreachable endpoint changes a run's
 exit code.
 
+`Depdep.CLI.disposition/1` makes the first decision — whether this invocation runs
+at all, asks for help, is switched off, or is refused. Which sentence a refusal
+gets is `spec/09-cli.md#hints`, and the compile exit is
+`spec/06-the-run.md#compile-failure`; both are described there and cited there,
+not twice.
+
+**The decisions are cited here, not the wrapper that halts.** `Depdep.CLI.main/1`
+calls `System.halt/1`, so no test can call it and then assert anything — a claim
+cited against it could never be shown, only asserted. The decisions it wires are
+each testable without ending the VM, which is the convention `parse/1` and
+`combination/2` already follow, and `spec/02-architecture.md#not-described` records
+how the wrapper itself is accounted for.
+
 > `post/3`'s own `@doc` lists three outcomes and omits `{:warn, message}`, which
 > `Depdep.CLI.main/1` handles and which `send_with_profile/4` returns. The code is
 > consistent; the docstring is not. Filed as #121 rather than settled here.
+
+```test disposition-decides-before-reading
+given --help, DEPDEP_ENABLED=false, an unreadable DEPDEP_ENABLED, and a plain run
+then the disposition is :help, {:disabled, value}, {:error, :environment, message}
+and :run, each decided without ending the VM
+```
 
 ```test failure-is-not-an-error
 given a metresis instance that refuses the connection

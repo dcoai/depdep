@@ -121,6 +121,7 @@ defmodule Depdep.CLITest do
       refute problem =~ "not a switch"
     end
 
+    @tag verifies: "cli-parse-reports-every-problem"
     test "every problem is reported, not only the first" do
       assert {:error, problems} = CLI.parse(["--nope", "--also-nope"])
       assert length(problems) == 2
@@ -139,10 +140,26 @@ defmodule Depdep.CLITest do
   # `deps.get`. Any other combination is someone editing an invocation and
   # getting less than they asked for, which is the case worth stopping.
   describe "combination/2" do
+    @tag verifies: "cli-combinations-refused"
     test "--mix-get needs --pull" do
       {:ok, opts} = CLI.parse(["--push", "--mix-get"])
       assert {:error, message} = CLI.combination(opts, [Depdep.Provider.Mix])
       assert message =~ "--pull"
+    end
+
+    # #135: a diagnostic for what a PULL restored, so there is nothing for it to
+    # explain in a push, a plan, a report or a sweep.
+    test "--explain-rebuilt needs --pull" do
+      {:ok, opts} = CLI.parse(["--explain-rebuilt", "--push"])
+
+      assert {:error, reason} = CLI.combination(opts, [Depdep.Provider.Mix])
+      assert reason =~ "--explain-rebuilt"
+      assert reason =~ "--pull"
+    end
+
+    test "--explain-rebuilt with --pull is fine" do
+      {:ok, opts} = CLI.parse(["--explain-rebuilt", "--pull"])
+      assert CLI.combination(opts, [Depdep.Provider.Mix]) == :ok
     end
 
     test "--mix-get is for the mix provider only" do

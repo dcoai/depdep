@@ -6,6 +6,11 @@ defmodule Depdep.RestoreCheckTest do
   defp unit(name, bucket, extra \\ []),
     do: struct(%Metrics.Unit{provider: "mix", label: "app/#{name}", bucket: bucket}, extra)
 
+  # What `statuses/2` now attaches to a rebuild verdict for `--explain-rebuilt`
+  # (#135). These tests are about re-bucketing, so its contents do not matter
+  # here — but the verdict has one shape, so they carry it.
+  defp evidence, do: %{build: "_build/test/lib/x", expected: {{"1.20.4", ~c"29"}, Hex.SCM, nil}}
+
   defp phase(units),
     do: %Metrics.Phase{
       provider: "mix",
@@ -17,11 +22,15 @@ defmodule Depdep.RestoreCheckTest do
 
   # uficap's shape (#85): mint restored, Mix would rebuild it, req compiled
   # against it and failed. The restore has to become a miss, with the reason.
+  @tag verifies: "restore-check-rebuckets"
   test "a restored unit Mix would rebuild is a miss with Mix's reason, and loses its saved time" do
     phase =
       phase([unit("mint", :pulled, saved_us: 5_000), unit("req", :missing, reason: "not found")])
 
-    verdicts = %{"app/mint" => {:rebuild, "the dependency build is outdated"}, "app/req" => :ok}
+    verdicts = %{
+      "app/mint" => {:rebuild, "the dependency build is outdated", evidence()},
+      "app/req" => :ok
+    }
 
     {phase, rebuilt} = RestoreCheck.apply(phase, verdicts)
 
@@ -45,7 +54,9 @@ defmodule Depdep.RestoreCheckTest do
 
   test "a present unit Mix would rebuild is a miss too" do
     {phase, rebuilt} =
-      RestoreCheck.apply(phase([unit("jason", :present)]), %{"app/jason" => {:rebuild, "x"}})
+      RestoreCheck.apply(phase([unit("jason", :present)]), %{
+        "app/jason" => {:rebuild, "x", evidence()}
+      })
 
     assert [%Metrics.Unit{bucket: :missing, rebuilt: true}] = phase.units
     assert length(rebuilt) == 1
@@ -59,7 +70,11 @@ defmodule Depdep.RestoreCheckTest do
       unit("plug", :missing, reason: "not found")
     ]
 
-    verdicts = %{"app/jason" => :ok, "app/plug" => {:rebuild, "irrelevant: it is a miss already"}}
+    verdicts = %{
+      "app/jason" => :ok,
+      "app/plug" => {:rebuild, "irrelevant: it is a miss already", evidence()}
+    }
+
     {phase, rebuilt} = RestoreCheck.apply(phase(units), verdicts)
 
     assert phase.units == units

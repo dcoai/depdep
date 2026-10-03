@@ -97,8 +97,54 @@ nothing there. `Depdep.RestoreCheck.count/1` counts them.
 **A value above zero means the key missed an input**, on the day it happens. That
 is what makes it worth reporting rather than silently repairing.
 
+**Which input, though, is a separate question, and `--explain-rebuilt` answers
+it.** Mix's commonest sentence — "the dependency build is outdated" — covers two
+different causes, a recorded lock entry differing from the current one and a
+manifest that cannot be read at all, and says neither. With the flag,
+`Depdep.RestoreCheck.explain/1` prints what the build's manifest recorded against
+what Mix expected: the Elixir and OTP pair, the SCM, and the lock entry with
+**the index of the first differing tuple element** named.
+`Depdep.RestoreCheck.Manifest.compare/2` is that comparison and
+`Depdep.RestoreCheck.Manifest.read/1` reads the file, distinguishing a manifest
+that is **absent** from one that is **unreadable** — Mix conflates them, and they
+have different causes. `Depdep.RestoreCheck.Manifest.path/1` is where Mix keeps
+it, printed so a reader can fetch it themselves, and
+`Depdep.RestoreCheck.Manifest.differs?/1` is what decides whether there is
+anything to print at all. `Depdep.RestoreCheck.Manifest` holds all three, and
+reads the file directly rather than through `Mix.Dep.ElixirSCM`, which is
+private and whose own reader invents a plausible-looking answer for a term it
+cannot match.
+
+It is off by default. Reporting six lines per rejected unit unprompted would,
+on a warm run with hundreds of them, bury the warning it exists to explain.
+
+```test manifest-comparison-names-the-element
+given a stored manifest and what Mix expected
+when they differ in the Elixir/OTP pair, the SCM or the lock entry
+then the differing field is named, and for the lock the index of the first
+differing tuple element
+and an absent manifest is distinguished from an unreadable one
+```
+
+```test explain-rebuilt-names-the-field
+given a restored unit whose manifest records a different lock entry
+when the run is made with --explain-rebuilt
+then the output names lock as the differing field and the element index
+and without the flag it prints nothing beyond Mix's own sentence
+```
+
 Only `pulled` and `present` units are in question: a miss is already a miss, and a
 skipped unit was never restored.
+
+The converge is asked **once per member** and answers for all of that member's
+units. A unit Mix does not list at all — outside the env, or not a dependency — is
+absent from the answer and left alone rather than guessed at.
+
+```test statuses-asks-mix-once-per-member
+given units of one member, one of them a dependency Mix will not accept
+then that one is a rebuild carrying Mix's reason and where Mix looks for the manifest
+and a unit Mix does not list is absent from the answer
+```
 
 ```test restore-check-rebuckets
 given a restored unit Mix would rebuild

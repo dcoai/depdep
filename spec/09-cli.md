@@ -30,6 +30,7 @@ One mode per run.
 | `--plan` `--report` `--sweep` `--pull` `--push` `--help` | flag | — | — |
 | `--mix-get` | flag | `--pull` | off |
 | `--compile-deps` | flag | `--pull --mix-get` | off |
+| `--explain-rebuilt` | flag | `--pull` | off |
 | `--provider NAME` | repeatable | all | `mix` |
 | `--project DIR` | repeatable | mix | discovery (`spec/04-store-layout.md#layout`) |
 | `--exclude PREFIX` | repeatable | mix | none |
@@ -78,6 +79,12 @@ Someone has to edit the invocation, so this can never break a pipeline that was
 working — only one that has just been changed, which is when being stopped is
 useful.
 
+```test cli-parse-reports-every-problem
+given an invocation with several problems
+then every one is reported, not only the first
+and an unknown switch is named, and a malformed value says the VALUE was wrong
+```
+
 ## Which combinations are legal {#combinations}
 
 `Depdep.CLI.combination/2` decides.
@@ -87,8 +94,15 @@ useful.
 | `--compile-deps` without `--mix-get` | refused: it compiles what a pull left missing *after* `--mix-get` |
 | `--mix-get` without `--pull` | refused: it runs `mix deps.get` inside a pull |
 | `--mix-get` with a provider other than mix | refused: it is for the mix provider only |
+| `--explain-rebuilt` without `--pull` | refused: it explains what a pull restored and Mix refused |
 | `--pull --mix-get`, default provider | allowed |
 | anything without `--mix-get` | allowed |
+
+```test cli-combinations-refused
+given each illegal combination in the table above
+then it is refused, and the reason names the switches involved
+and a legal one is accepted
+```
 
 ## The hint after a usage error {#hints}
 

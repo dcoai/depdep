@@ -118,6 +118,49 @@ defmodule Depdep.CLIRebuiltIntegrationTest do
     refute out_b =~ "pulled 1"
   end
 
+  # #135. The fixture above manufactures a manifest whose lock entry differs in a
+  # known way, which makes it the natural place to prove --explain-rebuilt names
+  # WHICH field differed. Mix's own sentence cannot: "the dependency build is
+  # outdated" covers both a differing lock and an unreadable manifest.
+  @tag verifies: "explain-rebuilt-names-the-field"
+  test "--explain-rebuilt names the differing field and element; silent without it", ctx do
+    a = checkout(ctx.base, "a", ctx.upstream)
+    assert {_, 0} = depdep(a, ctx.port, ["--pull", "--mix-get", "--compile-deps"])
+
+    manifest = Path.join([a, "_build", "test", "lib", "forked", ".mix", "compile.elixir_scm"])
+    {vsn, toolchain, scm, _lock} = :erlang.binary_to_term(File.read!(manifest))
+
+    stale =
+      {:git, "file:///elsewhere/forked", "0000000000000000000000000000000000000000",
+       [branch: "main"]}
+
+    File.write!(manifest, :erlang.term_to_binary({vsn, toolchain, scm, stale}))
+    assert {_, 0} = depdep(a, ctx.port, ["--push"])
+
+    b = checkout(ctx.base, "b", ctx.upstream)
+    File.cp!(Path.join(a, "mix.lock"), Path.join(b, "mix.lock"))
+
+    # Silent by default: #109 is a live complaint about depdep's stderr volume,
+    # and bizex's warm run has 217 rejected units.
+    assert {quiet, 0} = depdep(b, ctx.port, ["--pull", "--mix-get", "--compile-deps"])
+    assert quiet =~ "restored, but Mix would rebuild it"
+    refute quiet =~ "manifest:"
+    refute quiet =~ "DIFFERS"
+
+    c = checkout(ctx.base, "c", ctx.upstream)
+    File.cp!(Path.join(a, "mix.lock"), Path.join(c, "mix.lock"))
+
+    assert {loud, 0} =
+             depdep(c, ctx.port, ["--pull", "--mix-get", "--compile-deps", "--explain-rebuilt"])
+
+    assert loud =~ "manifest:"
+    assert loud =~ "compile.elixir_scm"
+    assert loud =~ "lock        DIFFERS"
+    assert loud =~ "elixir/otp  same"
+    # The url is element 1 of a git lock tuple and the first thing changed above.
+    assert loud =~ "first differing tuple element: 1"
+  end
+
   test "a clean hit is a hit: no rebuilt clause, nothing compiled", ctx do
     a = checkout(ctx.base, "a", ctx.upstream)
     assert {_, 0} = depdep(a, ctx.port, ["--pull", "--mix-get", "--compile-deps"])

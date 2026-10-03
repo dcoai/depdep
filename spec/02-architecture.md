@@ -10,10 +10,24 @@ bucketing, reporting, measuring — is indifferent to which kind of artifact it 
 handling. That indifference is the architecture's one real idea, and every module
 below is on one side of it or the other.
 
+**This file cites no code, deliberately.** A relation from a map section to a
+module cannot be validated — no test verifies "these modules are the run's shape" —
+so it would dangle for ever, guarding nothing and drowning the signal from the
+relations that can go current. #120 kept such citations so that changing a module
+would force this map to be re-read; #138 replaced that with something stronger.
+
+The guard is now a **test**: every module under `lib/` appears below, and every
+module named below exists. Both directions, the way the CLI's switch table is held
+to the parser's own list. A structural check cannot be rubber-stamped, which a
+confirmation can — so the map cannot quietly go stale even though nothing
+"implements" it.
+
+Module names here are therefore plain text, not code spans.
+
 ## The command line {#cli}
 
-`Depdep.CLI` parses, validates and dispatches, and owns all IO. Nothing else
-prints. `Depdep.CLI.Operator` holds the two operator modes, `--report` and
+Depdep.CLI parses, validates and dispatches, and owns all IO. Nothing else
+prints. Depdep.CLI.Operator holds the two operator modes, `--report` and
 `--sweep`, which are separated because they need a credential a pipeline should
 not have.
 
@@ -22,10 +36,10 @@ Specified in `spec/09-cli.md`; reclamation's rules in
 
 ## Asking Mix {#asking-mix}
 
-`Depdep.Deps` is **the one place Mix is asked** about a project's dependencies,
-and `Depdep.Member` is the one place any question about a member is asked — both
-inside the member's own project. `Depdep.Lock` reads `mix.lock`.
-`Depdep.Layout` decides which projects a run covers. `Depdep.BuildPath` answers
+Depdep.Deps is **the one place Mix is asked** about a project's dependencies,
+and Depdep.Member is the one place any question about a member is asked — both
+inside the member's own project. Depdep.Lock reads `mix.lock`.
+Depdep.Layout decides which projects a run covers. Depdep.BuildPath answers
 where one builds.
 
 Depdep used to re-derive what these now ask for, and every defect that produced
@@ -34,57 +48,57 @@ was an edge of a rule Mix already owns. Specified in
 
 ## The key {#key}
 
-`Depdep.Key` computes it, `Depdep.Config` supplies the compile-time
-configuration slice, and `Depdep.Json` is the canonical encoder the digests rest
+Depdep.Key computes it, Depdep.Config supplies the compile-time
+configuration slice, and Depdep.Json is the canonical encoder the digests rest
 on. Specified in `spec/03-keys.md`.
 
 ## Providers {#providers}
 
-`Depdep.Provider` is the behaviour; `Depdep.Provider.Mix`,
-`Depdep.Provider.Apt` and `Depdep.Provider.Git` implement it, with
-`Depdep.Provider.Mix.Get` handling `--mix-get`. `Depdep.Unit` is what they hand
-back and `Depdep.Archive` is how a unit becomes bytes.
+Depdep.Provider is the behaviour; Depdep.Provider.Mix,
+Depdep.Provider.Apt and Depdep.Provider.Git implement it, with
+Depdep.Provider.Mix.Get handling `--mix-get`. Depdep.Unit is what they hand
+back and Depdep.Archive is how a unit becomes bytes.
 
 Specified in `spec/05-units-and-providers.md`.
 
 ## The store {#store}
 
-`Depdep.S3` is the entire network surface: Signature v4, the six calls depdep
+Depdep.S3 is the entire network surface: Signature v4, the six calls depdep
 makes, and the concurrency derivation. Specified in
 `spec/04-store-layout.md#s3`.
 
 ## The run's shape {#run}
 
-`Depdep.SecondPass` decides what the second enumeration changes,
-`Depdep.RestoreCheck` asks Mix whether it accepts what was restored, and
-`Depdep.Compile` with `Depdep.Compile.Log` compiles the misses and times them.
-`Depdep.Roots` records what a consumer still needs.
+Depdep.SecondPass decides what the second enumeration changes,
+Depdep.RestoreCheck asks Mix whether it accepts what was restored, and
+Depdep.Compile with Depdep.Compile.Log compiles the misses and times them.
+Depdep.Roots records what a consumer still needs.
 
 Specified in `spec/06-the-run.md`.
 
 ## Measurement {#measurement}
 
-`Depdep.Metrics` is the run's numbers, `Depdep.Report` is the summary a human
-reads, `Depdep.Metresis` posts them, and `Depdep.Profile` with
-`Mix.Tasks.Depdep.Profile` keeps the vocabulary honest. `Depdep.Sweep` is the
+Depdep.Metrics is the run's numbers, Depdep.Report is the summary a human
+reads, Depdep.Metresis posts them, and Depdep.Profile with
+Mix.Tasks.Depdep.Profile keeps the vocabulary honest. Depdep.Sweep is the
 pure half of reclamation.
 
 Specified in `spec/07-metrics-and-profile.md` and `spec/08-reclamation.md`.
 
 ## Why the pure parts are pure {#purity}
 
-`Depdep.Sweep`, `Depdep.SecondPass`, `Depdep.Key` and `Depdep.Report` take their
+Depdep.Sweep, Depdep.SecondPass, Depdep.Key and Depdep.Report take their
 inputs as arguments and touch nothing. The rules worth being certain about are
 therefore testable without a store, a network or a clock.
 
 The split has a cost, and it is recorded rather than hidden: a decision that
 stays in the impure half can end up untested. That is what happened to
 reclamation's most important rail — the refusal to sweep a store with no current
-roots sat in `Depdep.CLI.Operator`, which talks to a store, while every other
+roots sat in Depdep.CLI.Operator, which talks to a store, while every other
 sweep rule sat in the pure module and was tested. It had no test at all (#126).
 
 The answer taken was to move the decision into the pure half
-(`Depdep.Sweep.current_roots/2`), not to abandon the split. A rule that decides
+(Depdep.Sweep.current_roots/2), not to abandon the split. A rule that decides
 whether to delete belongs beside the rules that decide what to delete.
 
 ## What is deliberately not described here {#not-described}
@@ -93,12 +107,19 @@ Some public functions carry no behaviour a reader of this specification needs:
 accessors that exist so a test can reach a constant, and formatting helpers whose
 output is asserted by the tests that use them.
 
-In the event, **no public item needed excusing**. Every one is described by a
-section, so `.surfex.exs` carries no `classes` and no `rules` — a stronger outcome
-than #112 planned for, and one that only became visible once every file was
-written.
+**One item is excused: Depdep.CLI.main/1.** It calls `System.halt/1`, so no test
+can call it and then assert — a claim cited against it could only ever be
+asserted, never shown. The decisions it wires are each public and tested for that
+reason, and they are cited where they are specified —
+`spec/01-goals-and-scope.md#failure-not-error` and `spec/09-cli.md#parsing`,
+`#combinations` and `#hints` — not here. This file names no code, for the reason
+#138 gives.
 
-If that changes, the mechanism to reach for is an excusal **by class**, never item
-by item, so a new helper falls into its class quietly while a new entry point
-matches no rule and is a gap. A class is for code whose only story is that it
-wires things together.
+#120 reported that nothing needed excusing. That was true only because the wrapper
+had been **cited** where it should have been excused; #137 corrected it, and
+`classes`/`rules` found their first genuine use.
+
+The excusal is **by class**, never item by item: the rule matches `main/N`, so
+another entry point added later falls into the class quietly while a new decision
+matches no rule and is a gap. A class is for code whose only story is that it wires
+things together, and a halting wrapper is exactly that.

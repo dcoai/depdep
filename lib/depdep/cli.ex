@@ -30,6 +30,7 @@ defmodule Depdep.CLI do
     push: :boolean,
     mix_get: :boolean,
     compile_deps: :boolean,
+    explain_rebuilt: :boolean,
     provider: :keep,
     project: :keep,
     exclude: :keep,
@@ -89,6 +90,10 @@ defmodule Depdep.CLI do
         {:error,
          "--compile-deps compiles what a pull left missing after --mix-get, so it needs both"}
 
+      opts[:explain_rebuilt] == true and opts[:pull] != true ->
+        {:error,
+         "--explain-rebuilt explains what a pull restored and Mix refused, so it needs --pull"}
+
       opts[:mix_get] != true ->
         :ok
 
@@ -129,7 +134,17 @@ defmodule Depdep.CLI do
   # Help first, and before `enabled?/0`: `--help` is a request to read the
   # documentation, so answering it with an exit code — because the environment
   # holds a typo — is unhelpful at exactly the moment help was asked for.
-  defp disposition(opts) do
+  @doc """
+  What the invocation asks for before anything is read: `:run`, `:help`,
+  `{:disabled, value}` or `{:error, class, message}`.
+
+  **Public for the reason `parse/1` is** (#137): `main/1` halts, so a decision worth
+  testing must be observable without ending the VM. This one was private by
+  oversight — `spec/01-goals-and-scope.md#failure-not-error` cited `main/1` for the
+  exit behaviour, which no test can call and then assert, so the claim could never
+  be shown. It cites this instead.
+  """
+  def disposition(opts) do
     if opts[:help] do
       :help
     else
@@ -460,10 +475,25 @@ defmodule Depdep.CLI do
     # would rebuild is a miss after all, named with Mix's reason, and
     # --compile-deps then compiles it like any other miss.
     env = Keyword.fetch!(opts, :env)
-    {phase, rebuilt} = Depdep.RestoreCheck.apply(phase, Depdep.RestoreCheck.statuses(units, env))
+    # Once, not once per use: `statuses/2` converges per member, and
+    # `spec/06-the-run.md#two-converges` is explicit that there are two converges
+    # in a run on purpose. A third for the sake of a diagnostic would be a
+    # performance regression hidden behind a flag.
+    verdicts = Depdep.RestoreCheck.statuses(units, env)
+    {phase, rebuilt} = Depdep.RestoreCheck.apply(phase, verdicts)
 
     Enum.each(rebuilt, fn {label, reason} ->
       warn("#{label}: restored, but Mix would rebuild it — #{reason} — counted as a miss")
+
+      if opts[:explain_rebuilt] == true do
+        case Map.get(verdicts, label) do
+          {:rebuild, _why, evidence} ->
+            Enum.each(Depdep.RestoreCheck.explain(evidence), &warn("  " <> &1))
+
+          _ ->
+            :ok
+        end
+      end
     end)
 
     {phase, units}
@@ -787,6 +817,12 @@ defmodule Depdep.CLI do
                  those, timed per dependency from the boundaries Mix prints. Your
                  own mix compile then finds every dependency up to date. A
                  dependency that does not compile ends the run with Mix's status.
+
+      --explain-rebuilt  with --pull: for each restore Mix refused, print what the
+                 build's manifest recorded against what Mix expected — the
+                 Elixir/OTP pair, the SCM and the lock entry, naming the first
+                 differing tuple element. Off by default; it is a diagnostic for
+                 when "restored, but Mix would rebuild it" needs explaining.
 
       --provider NAME operate on this artifact kind (repeatable).
                       Default: mix. Known: #{Provider.known()}

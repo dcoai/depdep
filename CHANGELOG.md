@@ -4,6 +4,18 @@ What changed for a user of depdep, per release. Each version is a git tag;
 the four earliest also carry GitLab release notes, from which these entries
 are condensed. Issue numbers are dco-tek/depdep's.
 
+## Unreleased
+
+### Added
+
+- **`--explain-rebuilt`** (#134): for each restore Mix refuses, print what the
+  build's manifest recorded against what Mix expected — the Elixir and OTP pair,
+  the SCM, and the lock entry with the index of the first differing tuple element
+  named. Mix's own sentence, "the dependency build is outdated", covers both a
+  differing lock and an unreadable manifest and distinguishes neither, which is
+  why #122 went three days without a mechanism. Off by default.
+
+
 ## v0.7.0 — 2026-09-28
 
 The key's inputs become Mix's own, and the profile learns to travel with the
