@@ -136,6 +136,16 @@ and without the flag it prints nothing beyond Mix's own sentence
 Only `pulled` and `present` units are in question: a miss is already a miss, and a
 skipped unit was never restored.
 
+The converge is asked **once per member** and answers for all of that member's
+units. A unit Mix does not list at all — outside the env, or not a dependency — is
+absent from the answer and left alone rather than guessed at.
+
+```test statuses-asks-mix-once-per-member
+given units of one member, one of them a dependency Mix will not accept
+then that one is a rebuild carrying Mix's reason and where Mix looks for the manifest
+and a unit Mix does not list is absent from the answer
+```
+
 ```test restore-check-rebuckets
 given a restored unit Mix would rebuild
 then it is counted as a miss, named with Mix's reason, and its saved time is dropped
