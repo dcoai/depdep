@@ -22,6 +22,7 @@ defmodule Depdep.RestoreCheck do
   """
 
   alias Depdep.{Metrics, Report, Unit}
+  alias Depdep.RestoreCheck.Manifest
 
   @doc """
   Mix's verdict on every unit, per member: `%{label => :ok | {:rebuild, why}}`.
@@ -53,8 +54,22 @@ defmodule Depdep.RestoreCheck do
     |> Map.new()
   end
 
+  # A rebuild verdict carries what `--explain-rebuilt` needs: the three values
+  # `Mix.Dep.Loader.validate_manifest/1` compares, and where the manifest is
+  # (#135). Mix's sentence says a build is outdated without saying which of them
+  # differed, and for the commonest status it cannot — one message, two causes.
   defp verdict(%Mix.Dep{status: {:ok, _}}), do: :ok
-  defp verdict(dep), do: {:rebuild, Mix.Dep.format_status(dep)}
+
+  defp verdict(%Mix.Dep{} = dep) do
+    {:rebuild, Mix.Dep.format_status(dep), evidence(dep)}
+  end
+
+  defp evidence(%Mix.Dep{scm: scm, opts: opts}) do
+    %{
+      build: opts[:build],
+      expected: {{System.version(), :erlang.system_info(:otp_release)}, scm, opts[:lock]}
+    }
+  end
 
   @doc """
   Re-buckets restored units Mix would rebuild: `{phase, [{label, reason}]}`.
@@ -67,7 +82,7 @@ defmodule Depdep.RestoreCheck do
     {units, rebuilt} =
       Enum.map_reduce(phase.units, [], fn unit, acc ->
         case {unit.bucket, Map.get(verdicts, unit.label)} do
-          {bucket, {:rebuild, why}} when bucket in [:pulled, :present] ->
+          {bucket, {:rebuild, why, _evidence}} when bucket in [:pulled, :present] ->
             reason = "rebuilt — " <> why
 
             {%{unit | bucket: :missing, reason: reason, rebuilt: true, saved_us: nil},
@@ -85,6 +100,65 @@ defmodule Depdep.RestoreCheck do
 
     {%{phase | units: units, tally: tally}, Enum.reverse(rebuilt)}
   end
+
+  @doc """
+  Lines explaining one rebuild, for `--explain-rebuilt` (#134).
+
+  Returned rather than printed, so IO stays in `Depdep.CLI` and every line is
+  asserted in a test without capturing output. `[]` when the manifest agrees with
+  what Mix expected — a rebuild for a reason outside the manifest, which is worth
+  seeing as the absence of an explanation rather than a wrong one.
+  """
+  def explain(%{build: build, expected: expected}) do
+    path = Manifest.path(build)
+
+    case Manifest.read(build) do
+      :absent ->
+        ["manifest: #{path} — ABSENT, so Mix recompiles"]
+
+      :unreadable ->
+        ["manifest: #{path} — UNREADABLE: it does not hold the term Mix writes"]
+
+      {:ok, stored} ->
+        verdicts = Manifest.compare(stored, expected)
+
+        if Manifest.differs?(verdicts),
+          do: ["manifest: #{path}"] ++ Enum.flat_map(verdicts, &field_line/1),
+          else: ["manifest: #{path} — every field agrees; the rebuild is for another reason"]
+    end
+  end
+
+  def explain(_no_evidence), do: []
+
+  defp field_line({field, :same}), do: ["  #{pad(field)} same"]
+
+  defp field_line({field, {:differs, detail}}) do
+    [
+      "  #{pad(field)} DIFFERS",
+      "    stored   #{inspect(detail.stored, limit: 8)}",
+      "    expected #{inspect(detail.expected, limit: 8)}"
+    ] ++
+      element_line(detail)
+  end
+
+  # The index is the deliverable: 2 or 3 is the version or checksum, 5 the
+  # dependency list, 6 the repo, 7 the outer checksum — and #122's collision
+  # table maps each to a cause.
+  defp element_line(%{element: :shape}),
+    do: ["    the two are not tuples of one size, so no element is comparable"]
+
+  defp element_line(%{element: index}) when is_integer(index),
+    do: ["    first differing tuple element: #{index}"]
+
+  defp element_line(_detail), do: []
+
+  # Displayed as Mix talks about them rather than as the atoms they are: a reader
+  # comparing this against `Mix.Dep.Loader.validate_manifest/1` should see the
+  # same words.
+  defp pad(field), do: String.pad_trailing(label(field), 11)
+
+  defp label(:elixir_otp), do: "elixir/otp"
+  defp label(field), do: to_string(field)
 
   @doc "How many restored units the run had to count as misses after all."
   def count(phases) do
