@@ -50,10 +50,36 @@
 # #120 made on `triangle:`, and for the same reason: the 110 triangle gaps and the
 # 177 unvalidated relations are one fact under two names, and gating on it would
 # demand hollow tests. See `spec/10-decisions.md#the-gate`.
+# ## Excusals (#137)
+#
+# `classes`/`rules` get their first use, and #120 was wrong to report them
+# unnecessary — they were unnecessary only because a halting wrapper had been
+# CITED where it should have been excused.
+#
+# `Depdep.CLI.main/1` calls `System.halt/1`. No test can call it and then assert,
+# so a claim cited against it can only ever be asserted, never shown. Its
+# decisions — `parse/1`, `disposition/1`, `combination/2`, `hint/1` — are each
+# public and tested for exactly that reason, which the source says out loud.
+#
+# The rule is BY CLASS, never by item, so another halting entry point added later
+# falls into it quietly while a new decision matches no rule and is a gap.
 [
+  classes: [
+    {"halting entry point",
+     "It calls System.halt/1, so no test can call it and then assert. What it " <>
+       "decides is the spec's subject and is cited there; this wires those " <>
+       "decisions to IO and an exit status."}
+  ],
+  rules: [
+    # `name` matches the bare item name, the module being `parent`. `main/N` rather
+    # than this one function: an entry point is named by convention, so another
+    # added later falls into the class quietly, which is what "by class, never by
+    # item" means.
+    %{class: "halting entry point", kinds: [:function], name: ~r/^main\/\d+$/}
+  ],
   adoption: :trust,
   sources: ["spec/[0-9]*.md"],
   tests: ["test/**/*_test.exs"],
   goldens: [:status],
-  require: [code: [:implements], test_hint: [:verifies]]
+  require: [code: [:implements, :excuses], test_hint: [:verifies]]
 ]

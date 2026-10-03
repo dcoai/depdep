@@ -134,7 +134,17 @@ defmodule Depdep.CLI do
   # Help first, and before `enabled?/0`: `--help` is a request to read the
   # documentation, so answering it with an exit code — because the environment
   # holds a typo — is unhelpful at exactly the moment help was asked for.
-  defp disposition(opts) do
+  @doc """
+  What the invocation asks for before anything is read: `:run`, `:help`,
+  `{:disabled, value}` or `{:error, class, message}`.
+
+  **Public for the reason `parse/1` is** (#137): `main/1` halts, so a decision worth
+  testing must be observable without ending the VM. This one was private by
+  oversight — `spec/01-goals-and-scope.md#failure-not-error` cited `main/1` for the
+  exit behaviour, which no test can call and then assert, so the claim could never
+  be shown. It cites this instead.
+  """
+  def disposition(opts) do
     if opts[:help] do
       :help
     else

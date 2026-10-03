@@ -82,4 +82,32 @@ defmodule Depdep.CLIEnabledTest do
       end
     end
   end
+
+  # #137. `spec/01-goals-and-scope.md#failure-not-error` used to cite `main/1` for
+  # the exit behaviour, which no test can call and then assert. It cites
+  # `disposition/1` instead — the decision `main/1` wires — and this is what shows
+  # the claim rather than asserting it.
+  describe "disposition/1 decides before anything is read" do
+    @tag verifies: "disposition-decides-before-reading"
+    test "--help asks for the usage text, whatever else is set" do
+      System.put_env("DEPDEP_ENABLED", "false")
+      assert CLI.disposition(help: true) == :help
+    end
+
+    test "DEPDEP_ENABLED=false is a disposition, not an error, and carries the value" do
+      System.put_env("DEPDEP_ENABLED", "FALSE")
+      assert CLI.disposition([]) == {:disabled, "FALSE"}
+    end
+
+    test "a value it cannot read is an environment error, named as such" do
+      System.put_env("DEPDEP_ENABLED", "perhaps")
+      assert {:error, :environment, message} = CLI.disposition([])
+      assert message =~ "perhaps"
+    end
+
+    test "unset and enabled is :run" do
+      System.delete_env("DEPDEP_ENABLED")
+      assert CLI.disposition([]) == :run
+    end
+  end
 end

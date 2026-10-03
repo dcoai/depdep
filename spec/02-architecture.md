@@ -93,12 +93,19 @@ Some public functions carry no behaviour a reader of this specification needs:
 accessors that exist so a test can reach a constant, and formatting helpers whose
 output is asserted by the tests that use them.
 
-In the event, **no public item needed excusing**. Every one is described by a
-section, so `.surfex.exs` carries no `classes` and no `rules` — a stronger outcome
-than #112 planned for, and one that only became visible once every file was
-written.
+**One item is excused: `Depdep.CLI.main/1`.** It calls `System.halt/1`, so no test
+can call it and then assert — a claim cited against it could only ever be
+asserted, never shown. The decisions it wires are each public and tested for that
+reason, and they are cited where they are specified —
+`spec/01-goals-and-scope.md#failure-not-error` and `spec/09-cli.md#parsing`,
+`#combinations` and `#hints` — not here. This file names no code, for the reason
+#138 gives.
 
-If that changes, the mechanism to reach for is an excusal **by class**, never item
-by item, so a new helper falls into its class quietly while a new entry point
-matches no rule and is a gap. A class is for code whose only story is that it
-wires things together.
+#120 reported that nothing needed excusing. That was true only because the wrapper
+had been **cited** where it should have been excused; #137 corrected it, and
+`classes`/`rules` found their first genuine use.
+
+The excusal is **by class**, never item by item: the rule matches `main/N`, so
+another entry point added later falls into the class quietly while a new decision
+matches no rule and is a gap. A class is for code whose only story is that it wires
+things together, and a halting wrapper is exactly that.
