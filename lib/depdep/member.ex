@@ -24,10 +24,19 @@ defmodule Depdep.Member do
   A fresh name per call would recompile `mix.exs` each time and, since the
   module from the first compile is still loaded, print
   `warning: redefining module` into every consumer's log — once per member per
-  question asked. The app name here is derived from the member's expanded
-  directory, so the second question about a member is a cache hit: no compile,
-  no warning, and two members with the same app name in different directories
-  never collide.
+  question asked. The app name is derived from the member's expanded directory,
+  so depdep's own second question about a member is a cache hit: no compile, no
+  warning, and two members with the same app name in different directories never
+  collide.
+
+  **That covered depdep's repeat questions and not Mix's own loads**, which is the
+  gap #109 found. Mix's converge loads a *path dependency's* project under its
+  real app name (`:contacts`), so depdep asking about that same directory as a
+  member under its own atom was a cache miss and recompiled. In a poncho whose
+  members are each other's path dependencies — `dco-tek/bizex`, nine of ten — that
+  was a warning per member per run. `remember/2` records Mix's name for a
+  directory and `app_for/1` prefers it, so one `mix.exs` compiles once a run
+  whichever path loaded it first (#132).
   """
 
   @doc """
@@ -51,7 +60,40 @@ defmodule Depdep.Member do
     Mix.Project.in_project(app_for(dir), dir, fn _module -> fun.() end)
   end
 
-  # Unique by construction, not by hashing: the atom IS the path. Members are
-  # few, so the atom table cost is bounded by the poncho's size.
-  defp app_for(dir), do: String.to_atom("depdep_member " <> dir)
+  @doc """
+  Records the app name Mix itself loaded a directory under (#132).
+
+  `Mix.Project.in_project/4` caches by app atom — `Mix.State.read_cache({:app,
+  app})` — so asking about a directory under a *different* atom compiles its
+  `mix.exs` again and, the module from Mix's load still being present, prints
+  `warning: redefining module X.MixProject`. In a poncho whose members are each
+  other's path dependencies that is one warning per member per run: nine on
+  `dco-tek/bizex`, about fifty lines a job.
+
+  stderr is where depdep's real warnings go — an unreachable store, a refused
+  metresis post, `restored, but Mix would rebuild it`. Two of those were reports
+  that went unread for days (#122, #110). Fifty lines of noise a job is how a tool
+  arranges for its own warnings to be ignored, which is why this is worth fixing
+  rather than tolerating.
+
+  `Depdep.Deps.converged/2` calls this for every path dependency Mix lists, from
+  `dep.app` and `dep.opts[:dest]`.
+  """
+  def remember(dir, app) when is_atom(app),
+    do: Process.put({__MODULE__, :app, Path.expand(dir)}, app)
+
+  @doc "The app name Mix used for this directory, or `nil`."
+  def remembered(dir), do: Process.get({__MODULE__, :app, Path.expand(dir)})
+
+  # Mix's own name for the directory when it has one, so the second question about
+  # a member is a cache hit rather than a recompile.
+  #
+  # The memo is the process dictionary, deliberately: it is a per-run note, the
+  # converges all run in the one process that drives a run, and a miss degrades to
+  # exactly the old behaviour — a unique atom, correct but noisier. A global store
+  # would outlive the run and have to be invalidated.
+  #
+  # Unique by construction when there is no memo, not by hashing: the atom IS the
+  # path. Members are few, so the atom table cost is bounded by the poncho's size.
+  defp app_for(dir), do: remembered(dir) || String.to_atom("depdep_member " <> dir)
 end

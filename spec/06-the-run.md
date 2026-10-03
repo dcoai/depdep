@@ -200,9 +200,28 @@ digest that depends on where depdep was launched from. That is precisely the
 machine-dependence `spec/04-store-layout.md#compile-config` warns consumers
 against in their own configuration.
 
-**Once per member.** Mix keys its cache of loaded projects by the app name it is
-given, so a fresh name per call would recompile `mix.exs` every time and print a
-redefinition warning for a module that is already loaded.
+**Once per run, whichever path loaded it first.** Mix keys its cache of loaded
+projects by the app name it is given, so asking about a directory under a
+different name recompiles its `mix.exs` and prints a redefinition warning for a
+module already loaded.
+
+depdep's own repeat questions were always a cache hit. **Mix's loads were not**: a
+converge loads a path dependency's project under its real app name, so asking
+about that directory as a *member* missed the cache. In a poncho whose members are
+each other's path dependencies that was one warning per member per run.
+`Depdep.Member.remember/2` records the name Mix used and
+`Depdep.Member.remembered/1` reads it back, so the member's question reuses Mix's
+cache.
+
+It matters beyond tidiness: stderr is where every real depdep warning goes,
+including `restored, but Mix would rebuild it`, and two such reports went unread
+for days inside the noise.
+
+```test mix-exs-compiles-once-per-run
+given a poncho member that path-depends on another member
+when depdep asks about the root and then about that member
+then no redefining-module warning is printed
+```
 
 **This moves the VM's working directory** for the duration of the call. Tests
 that exercise it are therefore `async: false`; a test that runs beside them and
