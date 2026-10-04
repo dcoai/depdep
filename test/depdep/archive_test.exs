@@ -149,4 +149,114 @@ defmodule Depdep.ArchiveTest do
 
     defp mtime(path), do: File.stat!(path, time: :posix).mtime
   end
+
+  # #131, from #122/#110/#135. The live store holds three objects for
+  # `plug 1.20.3`, carrying `_build/test`, `_build/sqlite/test` and
+  # `_build/sqlite/prod` — metresis sets `build_path: "_build/#{db_backend()}"` —
+  # and every one records a lock identical to the consumer's. The key has no
+  # build-path input and should not have one, since the bytes do not differ, so
+  # one object serves projects that build in different places.
+  #
+  # Extracting in place put the build tree where the consumer's Mix never looks.
+  # validate_manifest/1 then read no manifest at opts[:build] and reported "the
+  # dependency build is outdated" — the same sentence it uses for a lock
+  # mismatch, which is why this took days to find.
+  describe "an object built somewhere else restores where THIS member builds" do
+    setup do
+      base = Path.join(System.tmp_dir!(), "relocate-#{System.unique_integer([:positive])}")
+      pusher = Path.join(base, "pusher")
+      puller = Path.join(base, "puller")
+      on_exit(fn -> File.rm_rf!(base) end)
+      %{base: base, pusher: pusher, puller: puller}
+    end
+
+    defp build(dir, build_path, name, contents) do
+      File.mkdir_p!(Path.join([dir, build_path, "lib", name, ".mix"]))
+      File.mkdir_p!(Path.join([dir, "deps", name]))
+
+      File.write!(
+        Path.join([dir, build_path, "lib", name, ".mix", "compile.elixir_scm"]),
+        contents
+      )
+
+      File.write!(Path.join([dir, "deps", name, "mix.exs"]), "source\n")
+    end
+
+    @tag verifies: "restore-lands-at-this-members-build-path"
+    test "the manifest lands where Mix will read it, not where the pusher put it", ctx do
+      # metresis's shape: build_path "_build/sqlite", so the tree is
+      # _build/sqlite/test/lib/plug.
+      build(ctx.pusher, "_build/sqlite/test", "plug", "the pusher's manifest")
+      archive = Path.join(ctx.base, "plug.tar.gz")
+      assert :ok = Depdep.Archive.create(ctx.pusher, "plug", "_build/sqlite/test", archive)
+
+      # extc's shape: build_path "_build", so the tree is _build/test/lib/plug.
+      trees = Depdep.Archive.trees("plug", "_build/test")
+      assert :ok = Depdep.Archive.extract(archive, ctx.puller, trees)
+
+      manifest = Path.join([ctx.puller, "_build/test/lib/plug/.mix/compile.elixir_scm"])
+      assert File.read!(manifest) == "the pusher's manifest"
+      assert File.exists?(Path.join([ctx.puller, "deps/plug/mix.exs"]))
+
+      # And Depdep.Archive.complete?/3 — which is how a later run decides the unit is
+      # already satisfied — agrees, at the consumer's own build path.
+      assert Depdep.Archive.complete?(ctx.puller, "plug", "_build/test")
+    end
+
+    test "the pusher's build directory is not left behind as junk", ctx do
+      build(ctx.pusher, "_build/sqlite/test", "plug", "m")
+      archive = Path.join(ctx.base, "plug.tar.gz")
+      assert :ok = Depdep.Archive.create(ctx.pusher, "plug", "_build/sqlite/test", archive)
+
+      assert :ok =
+               Depdep.Archive.extract(
+                 archive,
+                 ctx.puller,
+                 Depdep.Archive.trees("plug", "_build/test")
+               )
+
+      refute File.exists?(Path.join(ctx.puller, "_build/sqlite")),
+             "extracting another project's object left its build path behind"
+
+      refute File.exists?(Path.join(ctx.puller, ".depdep")) and
+               Path.wildcard(Path.join([ctx.puller, ".depdep", "restore-*"])) != [],
+             "the staging directory was not cleaned up"
+    end
+
+    test "a same-path restore still works, which is the common case", ctx do
+      build(ctx.pusher, "_build/test", "plug", "same path")
+      archive = Path.join(ctx.base, "plug.tar.gz")
+      assert :ok = Depdep.Archive.create(ctx.pusher, "plug", "_build/test", archive)
+
+      assert :ok =
+               Depdep.Archive.extract(
+                 archive,
+                 ctx.puller,
+                 Depdep.Archive.trees("plug", "_build/test")
+               )
+
+      assert File.read!(Path.join([ctx.puller, "_build/test/lib/plug/.mix/compile.elixir_scm"])) ==
+               "same path"
+    end
+
+    # The fail-safe direction: a tree the object does not carry makes the unit a
+    # miss, which costs a compile. Leaving it absent would be a wrong restore.
+    @tag verifies: "restore-lands-at-this-members-build-path"
+    test "an object missing a tree is an error, not a partial restore", ctx do
+      File.mkdir_p!(Path.join([ctx.pusher, "deps", "plug"]))
+      File.write!(Path.join([ctx.pusher, "deps", "plug", "mix.exs"]), "only source\n")
+      archive = Path.join(ctx.base, "plug.tar.gz")
+      assert :ok = Depdep.Archive.create_trees(ctx.pusher, ["deps/plug"], archive, "plug")
+
+      assert {:error, reason} =
+               Depdep.Archive.extract(
+                 archive,
+                 ctx.puller,
+                 Depdep.Archive.trees("plug", "_build/test")
+               )
+
+      assert reason =~ "_build/test/lib/plug"
+      refute Depdep.Archive.complete?(ctx.puller, "plug", "_build/test")
+    end
+  end
 end
