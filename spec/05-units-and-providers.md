@@ -133,6 +133,32 @@ and puts the archived mtimes back so a restored manifest stays newer than the
 sources beside it. Archiving a dependency that is not there is an error rather
 than an empty archive.
 
+**A tree is restored where THIS member builds, not where the pusher built.** An
+object's entry names are relative to the pusher's project root, so the pusher's
+`build_path` is baked into them — a project that sets `build_path` carries
+`_build/<something>/<env>/lib/<name>` where another carries `_build/<env>/…`. The
+key has no build-path input and should not have one, because the bytes do not
+differ, so one object legitimately serves projects that build in different
+places.
+
+Extracting such an object in place put the build tree where the consumer's Mix
+never looks, and Mix then reported the dependency as outdated — the restore
+check's reason, with no way to tell it from a lock mismatch
+(`spec/06-the-run.md#restore-check`). So the extraction is staged and each tree
+is moved to the path `spec/05-units-and-providers.md#build-path` gives for this
+member. The pusher's build directory is not left behind.
+
+A tree the object does not carry, or one matched ambiguously, is an **error** and
+the unit becomes a miss. That costs a compile; placing a tree on a guess would
+cost correctness.
+
+```test restore-lands-at-this-members-build-path
+given an object archived from _build/sqlite/test/lib/<name>
+when it is restored into a project that builds at _build/test
+then the manifest is readable at _build/test/lib/<name>/.mix
+and the pusher's build directory is not left behind
+```
+
 ```test archive-both-trees
 given a dependency with a _build tree and no deps source
 then it counts as absent rather than present

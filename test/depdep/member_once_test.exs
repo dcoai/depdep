@@ -31,21 +31,29 @@ defmodule Depdep.MemberOnceTest do
     File.mkdir_p!(Path.join(leaf, "config"))
     on_exit(fn -> File.rm_rf!(base) end)
 
+    # **Unique per test, module AND app name.** Mix caches a loaded project by its
+    # app atom and the module stays loaded for the VM's life, so reusing either
+    # across tests in this file makes the second test redefine the first's module
+    # — the very warning under test, produced by the fixture rather than by the
+    # code. It made this suite order-dependent until it was caught in a full run.
+    n = System.unique_integer([:positive])
+    leaf_app = :"member_once_leaf_#{n}"
+
     # The poncho shape that produces the warning: a member that path-depends on
-    # another member, so Mix loads the leaf's project under `:member_once_leaf`
-    # while depdep later asks about that same directory as a member of its own.
+    # another member, so Mix loads the leaf's project under its own app name while
+    # depdep later asks about that same directory as a member in its own right.
     File.write!(Path.join(leaf, "mix.exs"), """
-    defmodule MemberOnceLeaf.MixProject do
+    defmodule MemberOnceLeaf#{n}.MixProject do
       use Mix.Project
-      def project, do: [app: :member_once_leaf, version: "0.1.0"]
+      def project, do: [app: :#{leaf_app}, version: "0.1.0"]
     end
     """)
 
     File.write!(Path.join(root, "mix.exs"), """
-    defmodule MemberOnceRoot#{System.unique_integer([:positive])}.MixProject do
+    defmodule MemberOnceRoot#{n}.MixProject do
       use Mix.Project
-      def project, do: [app: :member_once_root, version: "0.1.0", deps: deps()]
-      defp deps, do: [{:member_once_leaf, path: "../leaf"}]
+      def project, do: [app: :"member_once_root_#{n}", version: "0.1.0", deps: deps()]
+      defp deps, do: [{:#{leaf_app}, path: "../leaf"}]
     end
     """)
 
@@ -55,7 +63,7 @@ defmodule Depdep.MemberOnceTest do
     File.write!(Path.join(root, "mix.lock"), "%{}\n")
     File.write!(Path.join(leaf, "mix.lock"), "%{}\n")
 
-    %{root: root, leaf: leaf}
+    %{root: root, leaf: leaf, leaf_app: leaf_app}
   end
 
   @tag verifies: "mix-exs-compiles-once-per-run"
@@ -76,7 +84,7 @@ defmodule Depdep.MemberOnceTest do
   test "the root's converge records Mix's own app name for the member", ctx do
     Deps.converged(ctx.root, :test)
 
-    assert Member.remembered(ctx.leaf) == :member_once_leaf
+    assert Member.remembered(ctx.leaf) == ctx.leaf_app
   end
 
   @tag verifies: "mix-exs-compiles-once-per-run"
@@ -98,7 +106,7 @@ defmodule Depdep.MemberOnceTest do
   # VM's working directory for the duration.
   test "ask/3 runs the function inside the member's own project", ctx do
     assert Member.ask(ctx.leaf, :test, fn -> Mix.Project.config()[:app] end) ==
-             :member_once_leaf
+             ctx.leaf_app
 
     assert Member.ask(ctx.leaf, :test, fn -> File.cwd!() end) == Path.expand(ctx.leaf)
   end
@@ -107,7 +115,7 @@ defmodule Depdep.MemberOnceTest do
   test "the converge returns Mix's own structs, the path dependency among them", ctx do
     deps = Deps.converged(ctx.root, :test)
 
-    assert Enum.any?(deps, fn d -> match?(%Mix.Dep{app: :member_once_leaf}, d) end)
+    assert Enum.any?(deps, fn d -> d.app == ctx.leaf_app end)
     assert Enum.all?(deps, fn d -> match?(%Mix.Dep{}, d) end)
   end
 end

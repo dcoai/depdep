@@ -4,6 +4,27 @@ What changed for a user of depdep, per release. Each version is a git tag;
 the four earliest also carry GitLab release notes, from which these entries
 are condensed. Issue numbers are dco-tek/depdep's.
 
+## Unreleased
+
+### Fixed
+
+- **A restore lands where *this* member builds** (#131, the mechanism behind #122
+  and #110). An object's entry names carry the pusher's `build_path`: metresis
+  compiles at `_build/sqlite/test` and its objects say so. The key has no
+  build-path input — correctly, since the bytes do not differ — so one object
+  serves projects that build in different places, and extracting it in place put
+  the build tree where the consumer's Mix never looks. `validate_manifest/1` then
+  found no manifest and reported *"the dependency build is outdated"*, the same
+  sentence it uses for a lock mismatch, which is why this took days to find.
+
+  Measured in the live store: three objects for `plug 1.20.3`, carrying
+  `_build/test`, `_build/sqlite/test` and `_build/sqlite/prod`, every one
+  recording a lock identical to the consumer's.
+
+  Extraction is now staged and each tree moved to this member's own build path,
+  so **existing objects become usable rather than needing a re-push**. Keys are
+  unchanged, so no schema bump and no refill.
+
 ## v0.8.0 — 2026-10-03
 
 **No object path changes, so no refill.** Keys are unchanged; schema stays `v3`.
