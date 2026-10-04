@@ -4,7 +4,13 @@ What changed for a user of depdep, per release. Each version is a git tag;
 the four earliest also carry GitLab release notes, from which these entries
 are condensed. Issue numbers are dco-tek/depdep's.
 
-## Unreleased
+## v0.9.0 — 2026-10-04
+
+**No object path changes, so no refill.** Keys are unchanged; schema stays `v3`.
+Objects already in the store become usable again rather than needing a re-push.
+
+One fix, and it is the one seven consumers have been waiting on. If a project
+sees `restored, but Mix would rebuild it` on warm runs, this is very likely why.
 
 ### Fixed
 
