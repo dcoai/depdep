@@ -857,8 +857,27 @@ is now exercised where it can be seen, not asserted.
   says, that `--sweep` without `--confirm` removes nothing, and that with it
   exactly the objects no root references go.
 
-  What no container can answer is what the *production* bucket holds. That
-  stays an operator's `--report`, and it is the one claim still outstanding.
+  What no container can answer is what the *production* bucket holds, so that
+  was taken by hand on 2026-10-04 (#41):
+
+  ```
+  922 roots, 922 written in the last 30 days
+  apt/v1   269 objects,  211.1 MiB — 236 reachable,  33 not ( 26.8 MiB)
+  v2       569 objects, 1229.4 MiB — 382 reachable, 187 not (451.9 MiB)
+  v3/…     128 groups                                 (one row per package)
+  ```
+
+  Three things worth reading off it. **The live set is real**: 922 roots, every
+  one refreshed inside the window, so reclamation would have a live set to work
+  from rather than refusing. **`v2` is still live** — consumers pinned to v0.6.0
+  still push and pull it — and it holds 1229.4 MiB of which 451.9 MiB is
+  unreachable, the largest reclaimable thing in the store. **`apt/v1` has 33
+  unreachable objects and that is by design**: apt is never swept
+  (`spec/08-reclamation.md#prefixes`).
+
+  The 128 `v3/` rows are one per package where there should be one row in total,
+  which is #125 — a reporting defect, visible here in production for the first
+  time.
 
 **Not on hex.pm yet.** The package builds (`mix hex.build`) and every tag
 rehearses a publish, but no version has been published; until one is, install
