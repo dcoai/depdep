@@ -824,14 +824,57 @@ reserved character, and a `build_path` that made it serve a directory Mix never
 reads — both fixed in v0.1.0. What each release changed is in
 [CHANGELOG.md](CHANGELOG.md).
 
-**Measured.** The pipeline this was extracted from went from ~28 minutes to
-6m24s across 148 stored objects, with zero dependencies recompiled. The
-extraction was verified against that store: the same eleven projects compute
-**564 byte-identical keys**, and every object already there is one this code
-asks for. That remains the best evidence the key rules are right. On current
-pipelines a pull costs 1.3–1.6 s for 44 Debian packages and 3.2–4.2 s for
-~50 compiled dependencies, over the network. A restored git mirror measured
-2.43 s cold against 0.57 s on a 7.4 MB repository.
+**A restore costs time when it is wrong; it does not corrupt.** This is the
+claim to read first, because it is the one every defect found so far has
+confirmed. An object either matches the inputs Mix would have built from, or it
+is not returned — and when depdep gets that judgement wrong, the failure has
+always been to *refuse* work it could have done, never to serve a build that
+did not belong. v0.7.0 shipped a real instance of this (#122, #131): objects
+carry the pusher's `build_path`, so a restore could land where the consumer's
+Mix never looks. It cost recompiles at seven consumers for three weeks. Nothing
+was mis-built.
+
+**What it saves, measured across the fleet on 2026-10-04.** Per pipeline, the
+store's reported saving against depdep's own cost:
+
+| project | saved | depdep's cost | net |
+|---|---|---|---|
+| bizex | 178.9 s | 52.8 s | **+126 s** |
+| metresis | 40.4 s | 1.5 s | +39 s |
+| visualize | 29.7 s | 3.9 s | +26 s |
+| visualize2 | 30.0 s | 5.5 s | +25 s |
+| extc | 20.7 s | 12.4 s | +8 s |
+| extla | 12.0 s | 3.9 s | +8 s |
+
+**Net positive at every consumer, in tens of seconds to two minutes.** That is
+the number to plan against. A much larger figure exists and is also real: the
+poncho depdep was extracted from went from **~28 minutes to 6m24s** across 148
+objects. That was one project at one commit, with a cold cache and 215
+dependencies to compile — an upper bound on what a first adoption can win, not
+what a warm pipeline sees. Treat the table as the expectation and the 28 minutes
+as the ceiling.
+
+**What a wrong judgement is currently costing.** `depdep.rebuilt_after_restore`,
+latest per consumer: bizex **219**, extc 12, visualize2 8, visualize 1, extla 1;
+metresis, uficap, exio and depdep 0. Each one is an object transferred and then
+recompiled anyway — waste, not breakage. v0.9.0 should reduce these once
+consumers pin it; #122, #110 and #133 stay open until a consumer's pipeline says
+by how much, and #123 is a second cause not yet addressed.
+
+**Per-pull cost**, over the network: 1.3–1.6 s for 44 Debian packages, 3.2–4.2 s
+for ~50 compiled dependencies. A restored git mirror measured 2.43 s cold against
+0.57 s on a 7.4 MB repository.
+
+**On the key rules.** Extracting depdep from the poncho it grew in was verified
+by replaying it: the same eleven projects computed **564 byte-identical keys**,
+and every object already in the store was one the extracted code asked for. That
+showed the extraction changed no key — a refactor check, and a good one. It is
+not evidence about the rules in force today, which are schema `v3`; the keys it
+compared were `v2`.
+
+Every figure above is dated and re-takeable. The savings and rebuild counts come
+from the metrics store (one query per metric, grouped by project); the store's
+own contents come from `--report` against the live bucket, recorded on issue #41.
 
 **Measured, and worth knowing before relying on it.** Every mechanism below
 is now exercised where it can be seen, not asserted.
