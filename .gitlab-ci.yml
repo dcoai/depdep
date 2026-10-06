@@ -127,7 +127,6 @@ profile-instance-check:
   variables:
     # The URL form (#88) driving a real HTTP server for the first time.
     DEPDEP_STORE: "s3://depdep@s3:9090/depdep-ci"
-    DEPDEP_SECRET_KEY: depdep-ci-secret
   before_script:
     # depdep's own CI uses ITS store, never the group's. The dco-tek group defines
     # the separate variables unprotected and unscoped (eight consumers share one
@@ -146,6 +145,13 @@ profile-instance-check:
     # deliberately kept — it is not one of the separate variables, both forms use
     # it, and each job sets its own.
     - unset DEPDEP_ENDPOINT DEPDEP_BUCKET DEPDEP_ACCESS_KEY DEPDEP_REGION
+    # DEPDEP_SECRET_KEY is a group variable as well, so `variables:` cannot set it
+    # either — it has to be exported here, after the unset. This is the same trap
+    # twice: the access key broke `one_form/0` loudly, while the secret produced
+    # `SignatureDoesNotMatch` only on the server that checks signatures. The apt
+    # job passed with the wrong secret because adobe/s3mock does not validate them,
+    # which is noted above and is exactly why reclamation uses s3proxy.
+    - export DEPDEP_SECRET_KEY=depdep-ci-secret
     # Debian images delete a downloaded .deb the moment it is unpacked, which
     # would empty the archives directory before the push could see it. The
     # same line metresis and uficap already carry.
@@ -233,7 +239,6 @@ reclamation:
     JCLOUDS_PROVIDER: filesystem
     JCLOUDS_FILESYSTEM_BASEDIR: /data
     DEPDEP_STORE: "s3://depdep@s3:80/depdep-ci"
-    DEPDEP_SECRET_KEY: depdep-ci-secret
   before_script:
     # depdep's own CI uses ITS store, never the group's. The dco-tek group defines
     # the separate variables unprotected and unscoped (eight consumers share one
@@ -252,6 +257,13 @@ reclamation:
     # deliberately kept — it is not one of the separate variables, both forms use
     # it, and each job sets its own.
     - unset DEPDEP_ENDPOINT DEPDEP_BUCKET DEPDEP_ACCESS_KEY DEPDEP_REGION
+    # DEPDEP_SECRET_KEY is a group variable as well, so `variables:` cannot set it
+    # either — it has to be exported here, after the unset. This is the same trap
+    # twice: the access key broke `one_form/0` loudly, while the secret produced
+    # `SignatureDoesNotMatch` only on the server that checks signatures. The apt
+    # job passed with the wrong secret because adobe/s3mock does not validate them,
+    # which is noted above and is exactly why reclamation uses s3proxy.
+    - export DEPDEP_SECRET_KEY=depdep-ci-secret
     - apt-get update && apt-get install -y --no-install-recommends git curl
     - mix local.hex --force && mix local.rebar --force
     # See the note in apt-round-trip: an overriding `before_script` replaces the

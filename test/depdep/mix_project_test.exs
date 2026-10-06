@@ -142,6 +142,20 @@ defmodule Depdep.MixProjectTest do
     refute ci =~ ~r/^\s*DEPDEP_(ENDPOINT|BUCKET|ACCESS_KEY|REGION):\s*""\s*$/m,
            "clearing a store variable in `variables:` does nothing — project and " <>
              "group variables outrank a job's own. Use `unset` (#148)."
+
+    # The same trap caught the secret too, and far more quietly: the access key
+    # made `one_form/0` refuse out loud, while the wrong secret only failed against
+    # a server that checks signatures. adobe/s3mock does not, so the apt job passed
+    # with the production secret; s3proxy does, so reclamation failed with
+    # SignatureDoesNotMatch. A job must export its own secret, not declare it.
+    refute ci =~ ~r/^\s*DEPDEP_SECRET_KEY:\s/m,
+           "DEPDEP_SECRET_KEY in `variables:` is inert — the group defines one and " <>
+             "it outranks a job's own. Export it in before_script (#148)."
+
+    for job <- jobs do
+      assert job =~ "export DEPDEP_SECRET_KEY=",
+             "a job sets DEPDEP_STORE without exporting its own DEPDEP_SECRET_KEY (#148)"
+    end
   end
 
   # #124. depdep gained its first dependency in #113, and `mix deps.get` went
