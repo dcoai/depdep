@@ -35,6 +35,33 @@ defmodule Depdep.KeyTest do
       refute key(before, "ash") == key(later, "ash")
     end
 
+    # The same claim stated as its contrapositive, which is the half nothing asserted
+    # (#157). The test above shows the RECURSIVE key moves on a child bump; this shows
+    # the key the recursion replaced does NOT. `ash`'s own lock inputs — the version,
+    # the inner checksum and the build tools, which is everything a flat
+    # `<dep>:<version>` key could hash — are byte-identical across a spark bump. That
+    # is why a flat key serves the stale ash forever and nothing detects it.
+    @tag verifies: "recursion-prevents-a-flat-collision"
+    test "a flat key over the parent's own entry cannot tell a child bump apart" do
+      before = [hex("ash", "3.32.3", ["spark"]), hex("spark", "2.6.0", [])]
+      later = [hex("ash", "3.32.3", ["spark"]), hex("spark", "2.7.0", [])]
+
+      # Everything a flat key has to work with, read through the production readers
+      # rather than restated here.
+      flat = fn lock ->
+        {_, entry} = Enum.find(lock, fn {name, _} -> name == "ash" end)
+
+        {Depdep.Lock.version(entry), Depdep.Lock.inner_checksum(entry),
+         Depdep.Lock.build_tools(entry)}
+      end
+
+      assert flat.(before) == flat.(later),
+             "ash's own entry moved, so this is not the collision the recursion prevents"
+
+      refute key(before, "ash") == key(later, "ash"),
+             "the recursive key must tell apart what the flat key cannot"
+    end
+
     # Why the hash must recurse rather than cover the whole lockfile: precision.
     # A whole-lock digest would invalidate every package on any change at all.
     @tag verifies: "recursion-precision"

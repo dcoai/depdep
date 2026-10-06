@@ -72,6 +72,12 @@ whole lockfile — invalidates every package on any lock change whatsoever. Unde
 the recursion, bumping `spark` invalidates spark and the packages above it and
 leaves `postgrex`, `telemetry` and `bcrypt_elixir` alone.
 
+```test recursion-prevents-a-flat-collision
+given two locks differing only in a transitive dependency
+then the parent's own entry — all a flat <dep>:<version> key could hash — is identical
+and the recursive key tells the two apart
+```
+
 ```test recursion-precision
 given a lock where one dependency is bumped
 when every key is recomputed
