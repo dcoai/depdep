@@ -1,40 +1,56 @@
 # Depdep
 
-Do a piece of build work **once per distinct build**, and restore it everywhere
-else.
+**Compile a dependency once, and restore it everywhere else — without the
+correctness risk a build cache carries.**
 
-Depdep is a content-addressed store for build artifacts, with three providers:
-compiled Elixir dependencies, Debian packages, and git mirrors. Each keys its
-objects in the way that is actually sound for that kind of artifact, and those
-ways differ sharply — a `.deb` needs nothing more than its own filename, while a
-compiled dependency needs a hash of everything that went into it.
+Depdep keys each compiled Elixir dependency by a hash of everything that went into
+it: the toolchain, the dependency's own source, the build options it was declared
+with, the compile-time config reaching it, and — recursively — the keys of its own
+dependencies. So a stored object is either the build you would have produced
+yourself, or it is not returned at all.
 
-The mix provider is the deepest of the three, and the three sections that follow
-are about it. **It stores each compiled Elixir dependency as its own object,
-keyed by a recursive Merkle hash over that dependency's entire input closure.** A
-restore is therefore only ever the build the consumer would have produced itself.
-For the other two, see
-[apt packages and git mirrors](guide/03-apt-and-git.md).
+## Why you might need it
 
-*On the name: it was shortened from "dependency depot", back when a dependency
-was the only thing it stored. The packages and the mirrors came later, and the
-name stayed.*
+**Several Mix projects in one repository compile the same package once each.** The
+repository depdep was extracted from had 564 dependency instances across 113
+distinct packages, with `ash` compiled ten times at 44 s a pass. Those became 148
+stored objects.
 
-## What problem this solves
+**A single project recompiles its dependencies every pipeline.** A build cache
+normally fixes that — and a cache restores an opaque archive, then leaves Mix to
+infer what is stale from file timestamps. Its failure mode is a build that compiles
+clean, passes its tests, and is wrong. That is the risk depdep exists to remove,
+and [why a cache cannot](#why-not-just-use-a-cache) is the next section.
 
-Two different ones, depending on the shape of the project.
+## What it costs and what it saves
 
-**In a poncho** — several independent Mix projects in one repository, each with
-its own `deps/` and `_build/` — the same package is compiled once per member.
-Measured on the project this was extracted from: 564 dependency instances over
-113 distinct packages, with `ash` compiled ten times at 44 s a pass. Depdep
-collapsed that to 148 stored objects and cut CI from ~28 minutes to 6m24s.
+Measured on 2026-10-04 across the eight private projects depdep is used by — the
+ones it was built alongside, named here because the numbers are theirs. Per
+pipeline, what the store reported saving against what depdep itself cost:
 
-**In a single project** the win is across *pipelines* rather than members:
-compiled dependencies persist between CI runs. That is what a CI cache normally
-does — the difference is correctness, below.
+| project | saved | depdep's cost | net |
+|---|---|---|---|
+| bizex (a poncho, 215 dependencies) | 178.9 s | 52.8 s | **+126 s** |
+| metresis | 40.4 s | 1.5 s | +39 s |
+| visualize | 29.7 s | 3.9 s | +26 s |
+| visualize2 | 30.0 s | 5.5 s | +25 s |
+| extc | 20.7 s | 12.4 s | +8 s |
+| extla | 12.0 s | 3.9 s | +8 s |
 
-## Why not just use a CI cache
+**Net positive at every one, in tens of seconds to two minutes.** That is the
+figure to plan against. A much larger one exists and is also real — the repository
+depdep was extracted from went from **~28 minutes to 6m24s** — but that was one
+project at one commit with a cold cache and 215 dependencies to compile. Treat it
+as a ceiling, not a forecast; [Status](#status) has the detail and how to re-take
+every number here.
+
+**It stores Debian packages and git mirrors too**, keyed in the way that is sound
+for each: a `.deb` needs nothing beyond its own filename, where a compiled
+dependency needs that whole input closure.
+
+**Start here:** [Getting started](guide/01-getting-started.md).
+
+## Why not just use a cache
 
 A CI cache is one opaque archive per key, restored wholesale, after which Mix
 decides what is stale by comparing source mtimes against build manifests. **A
@@ -278,3 +294,9 @@ is now exercised where it can be seen, not asserted.
 **Not on hex.pm yet.** The package builds (`mix hex.build`) and every tag
 rehearses a publish, but no version has been published; until one is, install
 it from git as [Getting started](guide/01-getting-started.md) shows.
+
+---
+
+*On the name: it was shortened from "dependency depot", back when a dependency was
+the only thing it stored. The packages and the mirrors came later, and the name
+stayed.*
