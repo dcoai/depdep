@@ -84,7 +84,8 @@ defmodule Depdep.Provider.Mix do
           name: name,
           env: env,
           direction: direction,
-          build_path: build_path
+          build_path: build_path,
+          git_origin: Depdep.Lock.repo(entry)
         }
       }
     end)
@@ -137,9 +138,56 @@ defmodule Depdep.Provider.Mix do
   defp trees?(%Unit{context: %{project_dir: dir, name: name, build_path: build_path}}),
     do: Depdep.Archive.complete?(dir, name, build_path)
 
+  # **A restored git checkout keeps the PUSHER's `origin`, and Mix compares it**
+  # (#123). `Mix.SCM.Git.lock_status/1` asks for `get_lock_repo(lock) == origin`
+  # as well as the rev, comparing the lock's URL to `remote.origin.url` as
+  # strings — so a peer that spells the same repository differently gets
+  # `:mismatch`, which Mix reports as "lock mismatch: the dependency is out of
+  # date". That is also its wording for a genuine lock difference, which is why
+  # this looked like a key defect for weeks.
+  #
+  # The URL is deliberately absent from the key (`Depdep.Lock.repo/1`): the sha
+  # identifies the content, so one object serves every spelling. Measured in the
+  # live store: extla's objects for one commit exist under both
+  # `git@…:dco-tek/extla.git` and `https://…/dco-tek/extla.git`, while extc locks
+  # the https spelling and visualize, visualize2 and exio lock the ssh one.
+  #
+  # So the origin is rewritten to THIS consumer's lock URL on the way in. A hex
+  # dependency has no `git_origin` and no git command runs for it.
   @impl true
-  def restore(%Unit{context: %{project_dir: dir, name: name, build_path: build_path}}, tmp),
-    do: Depdep.Archive.extract(tmp, dir, Depdep.Archive.trees(name, build_path))
+  def restore(%Unit{context: %{project_dir: dir, name: name, build_path: build_path}} = unit, tmp) do
+    with :ok <- Depdep.Archive.extract(tmp, dir, Depdep.Archive.trees(name, build_path)) do
+      adopt_origin(unit)
+    end
+  end
+
+  # An unrewritten origin is a refused restore, not a wrong one — but refusing
+  # costs a compile for no reason, so a failure here is reported as an error and
+  # the unit becomes a miss. Leaving a foreign origin in place silently is the one
+  # option not taken.
+  defp adopt_origin(%Unit{context: %{git_origin: nil}}), do: :ok
+
+  defp adopt_origin(%Unit{context: %{git_origin: url, project_dir: dir, name: name}}) do
+    checkout = Path.join([dir, "deps", name])
+
+    if File.dir?(Path.join(checkout, ".git")) do
+      case System.cmd("git", ["-C", checkout, "remote", "set-url", "origin", url],
+             stderr_to_stdout: true
+           ) do
+        {_out, 0} ->
+          :ok
+
+        {out, status} ->
+          {:error,
+           "could not set deps/#{name}'s origin to #{url} (git exited #{status}: " <>
+             "#{out |> String.split("\n", trim: true) |> List.last() |> Kernel.||("no output") |> String.slice(0, 160)})"}
+      end
+    else
+      # No `.git` to point anywhere. Mix will read no origin and rebuild, which
+      # `Depdep.RestoreCheck` turns into a miss with Mix's own reason.
+      :ok
+    end
+  end
 
   @impl true
   def collect(%Unit{context: %{project_dir: dir, name: name, build_path: build_path}}, tmp),

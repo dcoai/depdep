@@ -302,6 +302,114 @@ defmodule Depdep.Provider.MixTest do
     end
   end
 
+  # #123: Mix compares the lock's URL against the restored checkout's
+  # `remote.origin.url` as STRINGS, and a restored checkout carries the pusher's.
+  # Asserted against `Mix.SCM.Git.lock_status/1` itself rather than against a
+  # restatement of it, so the test fails if Mix ever changes the comparison.
+  describe "a restored git dependency adopts this consumer's origin (#123)" do
+    @pusher_url "ssh://git@example.invalid:2022/forked.git"
+    @consumer_url "https://example.invalid/forked.git"
+
+    setup do
+      root = Path.join(System.tmp_dir!(), "depdep-origin-#{System.unique_integer([:positive])}")
+      dir = Path.join(root, "app")
+      checkout = Path.join([dir, "deps", "forked"])
+      File.mkdir_p!(checkout)
+      File.mkdir_p!(Path.join([dir, "_build", "test", "lib", "forked", "ebin"]))
+      File.write!(Path.join([dir, "_build", "test", "lib", "forked", "ebin", "f.beam"]), "beam")
+      File.write!(Path.join(checkout, "mix.exs"), "source")
+      on_exit(fn -> File.rm_rf!(root) end)
+
+      # A real repository, so `git` and Mix both read it for real. Its origin is
+      # the PUSHER's spelling — what travels inside an object.
+      git = fn args ->
+        {_, 0} = System.cmd("git", ["-C", checkout | args], stderr_to_stdout: true)
+      end
+
+      git.(["init", "--quiet"])
+      git.(["config", "user.email", "t@example.invalid"])
+      git.(["config", "user.name", "t"])
+      git.(["add", "mix.exs"])
+      git.(["commit", "--quiet", "-m", "c"])
+      git.(["remote", "add", "origin", @pusher_url])
+      {sha, 0} = System.cmd("git", ["-C", checkout, "rev-parse", "HEAD"])
+      sha = String.trim(sha)
+
+      # ...while THIS consumer locks the same commit under a different spelling.
+      File.write!(
+        Path.join(dir, "mix.lock"),
+        ~s|%{"forked": {:git, "#{@consumer_url}", "#{sha}", []}}\n|
+      )
+
+      {:ok, units, _warnings} =
+        Provider.Mix.enumerate(root: root, env: :test, project: "app")
+
+      unit = Enum.find(units, &(&1.name == "forked"))
+
+      %{dir: dir, checkout: checkout, unit: unit, sha: sha}
+    end
+
+    defp origin_of(checkout) do
+      {url, 0} = System.cmd("git", ["-C", checkout, "config", "remote.origin.url"])
+      String.trim(url)
+    end
+
+    # The exact opts Mix builds for a git dependency, so `lock_status/1` takes the
+    # same path it takes in a real `mix deps` run.
+    defp mix_opts(checkout, url, sha),
+      do: [git: url, lock: {:git, url, sha, []}, checkout: checkout]
+
+    test "the lock URL reaches the unit", %{unit: unit} do
+      assert unit.context.git_origin == @consumer_url
+    end
+
+    @tag verifies: "restored-git-origin-adopted"
+    test "Mix refuses the pusher's origin, and accepts it after a restore",
+         %{dir: dir, checkout: checkout, unit: unit, sha: sha} do
+      # The URL Mix compares is read from the lock by `Depdep.Lock.repo/1` — the
+      # same reader the restore uses — rather than restated as a literal here.
+      lock_url = Depdep.Lock.repo({:git, @consumer_url, sha, []})
+      assert lock_url == unit.context.git_origin
+
+      opts = mix_opts(checkout, lock_url, sha)
+
+      # The control: this is the failure consumers saw. Without it, the assertion
+      # below could pass because Mix accepts anything.
+      assert Mix.SCM.Git.lock_status(opts) == :mismatch
+      assert origin_of(checkout) == @pusher_url
+
+      tmp =
+        Path.join(System.tmp_dir!(), "depdep-origin-#{System.unique_integer([:positive])}.tar.gz")
+
+      on_exit(fn -> File.rm(tmp) end)
+      assert Provider.Mix.collect(unit, tmp) == :ok
+
+      File.rm_rf!(checkout)
+      File.rm_rf!(Path.join([dir, "_build", "test", "lib", "forked"]))
+
+      assert Provider.Mix.restore(unit, tmp) == :ok
+      assert origin_of(checkout) == @consumer_url
+      assert Mix.SCM.Git.lock_status(opts) == :ok
+    end
+
+    test "a git object whose checkout has no .git restores without failing",
+         %{dir: dir, checkout: checkout, unit: unit} do
+      File.rm_rf!(Path.join(checkout, ".git"))
+
+      tmp =
+        Path.join(System.tmp_dir!(), "depdep-origin-#{System.unique_integer([:positive])}.tar.gz")
+
+      on_exit(fn -> File.rm(tmp) end)
+      assert Provider.Mix.collect(unit, tmp) == :ok
+      File.rm_rf!(checkout)
+      File.rm_rf!(Path.join([dir, "_build", "test", "lib", "forked"]))
+
+      # Nothing to point anywhere. Mix reads no origin and rebuilds, which
+      # `Depdep.RestoreCheck` turns into a miss — a compile, not a wrong restore.
+      assert Provider.Mix.restore(unit, tmp) == :ok
+    end
+  end
+
   describe "present?/restore/collect round-trip" do
     setup %{root: root, by_name: by_name} do
       dir = Path.join(root, "app")

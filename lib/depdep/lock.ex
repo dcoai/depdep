@@ -67,6 +67,19 @@ defmodule Depdep.Lock do
   # it names the exact tree, not a package tarball someone assembled from it.
   def inner_checksum(entry) when elem(entry, 0) == :git, do: elem(entry, 2)
 
+  @doc """
+  The repository URL a git entry names, and `nil` for a hex entry.
+
+  **Deliberately not a key input.** The sha already identifies the content, so one
+  object serves every way of spelling its address — otherwise the same commit
+  would be stored once per spelling. The URL matters only on restore, because
+  `Mix.SCM.Git.lock_status/1` compares the lock's URL against the checkout's
+  `remote.origin.url` as strings, and a restored checkout keeps the pusher's
+  (#123).
+  """
+  def repo(entry) when elem(entry, 0) == :git, do: elem(entry, 1)
+  def repo(entry) when elem(entry, 0) == :hex, do: nil
+
   def build_tools(entry) when elem(entry, 0) == :hex, do: entry |> elem(4) |> inspect()
 
   # A git entry does not record its build tools. Constant rather than absent, so
