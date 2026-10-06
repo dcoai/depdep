@@ -99,6 +99,65 @@ defmodule Depdep.MixProjectTest do
     end
   end
 
+  # #148. depdep's own CI points at a throwaway store with `DEPDEP_STORE`, while
+  # the dco-tek group defines the SEPARATE variables unprotected and unscoped so
+  # every consumer inherits one shared store. depdep refuses both forms at once
+  # rather than guessing, so a job setting the URL form must get rid of the
+  # inherited one.
+  #
+  # It must `unset` them, NOT set them to "" in `variables:`. **Project and group
+  # CI variables take precedence over a job's own `variables:`** — documented
+  # GitLab behaviour, and the opposite of the intuition. The first fix for this
+  # used `DEPDEP_ACCESS_KEY: ""` and changed nothing: the job still saw the
+  # group's value, and the pipeline failed the same way. This test asserts the
+  # form that works, so that mistake cannot come back.
+  #
+  # A test rather than a CI-only check, for the reason #124's is: the next group
+  # variable someone adds for another project should break this on a developer's
+  # machine, not three steps downstream in a pipeline.
+  test "every job that sets DEPDEP_STORE unsets the inherited separate variables" do
+    ci = File.read!(".gitlab-ci.yml")
+
+    jobs =
+      ci
+      |> String.split(~r/^[ \t]*variables:[ \t]*$/m)
+      |> Enum.drop(1)
+      |> Enum.filter(&(&1 =~ "DEPDEP_STORE:"))
+
+    assert jobs != [], "no job sets DEPDEP_STORE — has .gitlab-ci.yml moved?"
+
+    # The list `Depdep.S3` treats as the separate form. DEPDEP_SECRET_KEY is not one
+    # of them: both forms use it, so unsetting it would break the job it belongs to.
+    separate = ~w(DEPDEP_ENDPOINT DEPDEP_BUCKET DEPDEP_ACCESS_KEY DEPDEP_REGION)
+
+    unsets = Regex.scan(~r/^\s*- unset ([A-Z_ ]+)$/m, ci)
+    assert length(unsets) >= length(jobs), "a job sets DEPDEP_STORE without an unset line"
+
+    for [_, names] <- unsets, name <- separate do
+      assert name in String.split(names),
+             "an unset line omits #{name}. depdep refuses two config forms (#148), " <>
+               "and the group defines these for every project."
+    end
+
+    refute ci =~ ~r/^\s*DEPDEP_(ENDPOINT|BUCKET|ACCESS_KEY|REGION):\s*""\s*$/m,
+           "clearing a store variable in `variables:` does nothing — project and " <>
+             "group variables outrank a job's own. Use `unset` (#148)."
+
+    # The same trap caught the secret too, and far more quietly: the access key
+    # made `one_form/0` refuse out loud, while the wrong secret only failed against
+    # a server that checks signatures. adobe/s3mock does not, so the apt job passed
+    # with the production secret; s3proxy does, so reclamation failed with
+    # SignatureDoesNotMatch. A job must export its own secret, not declare it.
+    refute ci =~ ~r/^\s*DEPDEP_SECRET_KEY:\s/m,
+           "DEPDEP_SECRET_KEY in `variables:` is inert — the group defines one and " <>
+             "it outranks a job's own. Export it in before_script (#148)."
+
+    for job <- jobs do
+      assert job =~ "export DEPDEP_SECRET_KEY=",
+             "a job sets DEPDEP_STORE without exporting its own DEPDEP_SECRET_KEY (#148)"
+    end
+  end
+
   # #124. depdep gained its first dependency in #113, and `mix deps.get` went
   # into the `default:` `before_script`. A job that defines its OWN
   # `before_script` replaces the default's rather than extending it, so two jobs
