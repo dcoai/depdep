@@ -162,6 +162,34 @@ defmodule Depdep.CLITest do
       assert CLI.combination(opts, [Depdep.Provider.Mix]) == :ok
     end
 
+    # #150, the fourth rail. `--confirm` is the only irreversible thing depdep does,
+    # and the bucket it acts on can come from an inherited environment variable —
+    # which is how the group's credentials reached depdep's own CI in #148.
+    test "--confirm needs --bucket" do
+      {:ok, opts} = CLI.parse(["--sweep", "--confirm"])
+      assert {:error, message} = CLI.combination(opts, [Depdep.Provider.Mix])
+      assert message =~ "--bucket"
+      assert message =~ "name the store"
+    end
+
+    # A dry run changes nothing, so it asks for nothing. Making the safe path
+    # harder would push an operator toward the destructive one.
+    test "a dry run needs no --bucket" do
+      {:ok, opts} = CLI.parse(["--sweep"])
+      assert CLI.combination(opts, [Depdep.Provider.Mix]) == :ok
+    end
+
+    test "--bucket without --confirm is refused rather than ignored" do
+      {:ok, opts} = CLI.parse(["--sweep", "--bucket", "some-store"])
+      assert {:error, message} = CLI.combination(opts, [Depdep.Provider.Mix])
+      assert message =~ "--confirm"
+    end
+
+    test "--confirm with --bucket is fine" do
+      {:ok, opts} = CLI.parse(["--sweep", "--confirm", "--bucket", "some-store"])
+      assert CLI.combination(opts, [Depdep.Provider.Mix]) == :ok
+    end
+
     test "--mix-get is for the mix provider only" do
       {:ok, opts} = CLI.parse(["--pull", "--mix-get", "--provider", "apt"])
       assert {:error, message} = CLI.combination(opts, [Depdep.Provider.Apt])

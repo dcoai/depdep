@@ -54,6 +54,38 @@ Met by #126, which also moved the decision out of the CLI and into
 by the same function, because a report that disagreed with the sweep it precedes
 would be worse than no report.
 
+## Aiming a sweep {#aim}
+
+The three rails above decide **what** a sweep removes. None decides **where** it
+acts, and that is a separate way to be wrong: the store comes from the
+environment, so an inherited variable can aim a correct command at the wrong
+bucket.
+
+So **`--confirm` must name the bucket it will change.** `--bucket NAME` is
+required with `--confirm` and refused unless it is the configured bucket. The
+check happens before the listing, so a misaimed invocation costs nothing and says
+so immediately. A dry run needs nothing — it changes nothing, and making the safe
+path harder would push an operator toward the destructive one.
+
+**The real guard is still the credential, and that is now measured rather than
+recommended.** A pipeline identity does not hold a credential that can delete at
+all. Verified against the production store without removing anything, by asking it
+to delete a key that cannot exist — S3's DELETE is idempotent, so the request
+tests permission and nothing else:
+
+```
+DELETE __depdep_permission_probe_… → 403 AccessDenied (elixir-dep-store)
+```
+
+Repeat that whenever the claim needs re-checking. This rail exists for the
+operator who legitimately *does* hold a deleting credential, which is the one case
+the credential cannot cover.
+
+```test sweep-confirm-names-its-bucket
+given --confirm naming a bucket that is not the configured one
+then nothing is listed or removed, and the refusal shows both names
+```
+
 ## One rule per prefix, because the providers are not alike {#prefixes}
 
 `Depdep.Sweep.plan/3` matches the known provider prefixes and treats

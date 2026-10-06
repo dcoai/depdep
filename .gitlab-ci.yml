@@ -308,7 +308,11 @@ reclamation:
     - grep -qE '105 objects' /tmp/report2.log
 
     # And with it, exactly what no root names.
-    - mix run -e 'Depdep.CLI.main(["--sweep", "--grace", "-1", "--confirm"])' 2>&1 | tee /tmp/sweep.log
+    # --bucket is the fourth rail (#150): --confirm names the store it will change,
+    # and depdep refuses if that is not the configured one. This job is the rail's
+    # example rather than an exception to it — and it is the invocation that would
+    # have caught the misconfiguration in #148 at the command, not at the store.
+    - mix run -e 'Depdep.CLI.main(["--sweep", "--grace", "-1", "--confirm", "--bucket", "depdep-ci"])' 2>&1 | tee /tmp/sweep.log
     - grep -qE 'removed 1040 of 1040' /tmp/sweep.log
     - mix run -e 'Depdep.CLI.main(["--report"])' 2>&1 | tee /tmp/after.log
     - test "$(grep -c '1 objects, 0.0 MiB — 1 reachable, 0 not' /tmp/after.log)" = 10

@@ -21,6 +21,7 @@ defmodule Depdep.CLI do
     report: :boolean,
     sweep: :boolean,
     confirm: :boolean,
+    bucket: :string,
     within: :integer,
     grace: :integer,
     keep_epochs: :integer,
@@ -93,6 +94,20 @@ defmodule Depdep.CLI do
       opts[:explain_rebuilt] == true and opts[:pull] != true ->
         {:error,
          "--explain-rebuilt explains what a pull restored and Mix refused, so it needs --pull"}
+
+      # The fourth rail (#150). --confirm is the only irreversible thing depdep
+      # does, and of the other three rails `--grace` guards against the clock and
+      # `current_roots` against an empty live set — none asks WHICH store. The
+      # bucket can arrive from an inherited environment variable, which is exactly
+      # how #148 happened, so the operator names it and depdep checks the name.
+      #
+      # A dry run needs nothing: it deletes nothing, and making the safe path
+      # harder would push people toward the destructive one.
+      opts[:confirm] == true and opts[:bucket] in [nil, ""] ->
+        {:error, "--confirm needs --bucket to name the store it will change"}
+
+      opts[:bucket] != nil and opts[:confirm] != true ->
+        {:error, "--bucket names the store --confirm will change, so it needs --confirm"}
 
       opts[:mix_get] != true ->
         :ok
@@ -844,6 +859,10 @@ defmodule Depdep.CLI do
     Options for --sweep:
 
       --confirm       actually delete. Without it nothing is removed.
+      --bucket NAME   the bucket --confirm is allowed to change. Required with
+                      --confirm, and refused if it is not the configured bucket:
+                      the store can come from an inherited environment variable,
+                      so the one irreversible command says its target out loud.
       --grace DAYS    never remove anything created this recently (default 2),
                       so a push racing the listing is not swept
       --keep-epochs N git mirrors to keep per repository (default 2)
