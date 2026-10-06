@@ -39,9 +39,12 @@ defmodule Depdep.FakeStore do
 
   defp serve(sock, agent, buffer) do
     case read_request(sock, buffer) do
-      {:ok, method, path, headers, body, rest} ->
+      {:ok, method, path, target, headers, body, rest} ->
+        # `requests/1` records the PATH, not the raw target: other tests match on it
+        # (`cli_saved_integration_test.exs`), and the query string is only the
+        # listing's business.
         Agent.update(agent, fn s -> %{s | requests: [{method, path, headers} | s.requests]} end)
-        :gen_tcp.send(sock, respond(agent, method, path, headers, body))
+        :gen_tcp.send(sock, respond(agent, method, {path, target}, headers, body))
         serve(sock, agent, rest)
 
       :closed ->
@@ -58,7 +61,7 @@ defmodule Depdep.FakeStore do
         length = headers |> Map.get("content-length", "0") |> String.to_integer()
 
         case read_body(sock, rest, length) do
-          {:ok, body, rest} -> {:ok, method, path_of(target), headers, body, rest}
+          {:ok, body, rest} -> {:ok, method, path_of(target), target, headers, body, rest}
           :closed -> :closed
         end
 
@@ -92,7 +95,33 @@ defmodule Depdep.FakeStore do
     target |> String.split("?", parts: 2) |> hd() |> String.split("/", parts: 3) |> List.last()
   end
 
-  defp respond(agent, "PUT", path, headers, body) do
+  # ListObjectsV2, which reclamation needs and nothing else does: `--report` and
+  # `--sweep` are the only commands that enumerate (#150). Enough of the real shape
+  # to be worth testing against — `Contents` with `Key`, `Size` and `LastModified`,
+  # and `IsTruncated` false, since nothing here crosses a page boundary. Pagination
+  # against a server that signs a real continuation token is the `reclamation` CI
+  # job's business, not this one's.
+  defp respond(agent, "GET", {path, target}, _headers, _body) do
+    if String.contains?(target, "list-type=2") do
+      now = DateTime.utc_now() |> DateTime.to_iso8601()
+
+      contents =
+        Enum.map_join(objects(agent), "", fn {key, {bytes, _meta}} ->
+          "<Contents><Key>#{key}</Key><Size>#{byte_size(bytes)}</Size>" <>
+            "<LastModified>#{now}</LastModified></Contents>"
+        end)
+
+      body =
+        ~s(<?xml version="1.0" encoding="UTF-8"?>) <>
+          "<ListBucketResult><IsTruncated>false</IsTruncated>#{contents}</ListBucketResult>"
+
+      "HTTP/1.1 200 OK\r\nContent-Length: #{byte_size(body)}\r\n\r\n" <> body
+    else
+      respond_object(agent, "GET", path)
+    end
+  end
+
+  defp respond(agent, "PUT", {path, _target}, headers, body) do
     metadata =
       for {"x-amz-meta-" <> key, value} <- headers, into: %{}, do: {key, value}
 
@@ -100,7 +129,14 @@ defmodule Depdep.FakeStore do
     "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"
   end
 
-  defp respond(agent, method, path, _headers, _body) when method in ["GET", "HEAD"] do
+  defp respond(agent, method, {path, _target}, _headers, _body) when method in ["GET", "HEAD"] do
+    respond_object(agent, method, path)
+  end
+
+  defp respond(_agent, _method, _path, _headers, _body),
+    do: "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n"
+
+  defp respond_object(agent, method, path) do
     case Map.fetch(objects(agent), path) do
       {:ok, {bytes, metadata}} ->
         meta = Enum.map_join(metadata, "", fn {k, v} -> "x-amz-meta-#{k}: #{v}\r\n" end)
@@ -111,7 +147,4 @@ defmodule Depdep.FakeStore do
         "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"
     end
   end
-
-  defp respond(_agent, _method, _path, _headers, _body),
-    do: "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n"
 end

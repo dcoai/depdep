@@ -40,12 +40,47 @@ defmodule Depdep.CLI.Operator do
         warn("store not configured (#{reason}) — nothing to sweep")
 
       {:ok, cfg} ->
-        Depdep.S3.start()
+        case aimed_at(cfg, opts) do
+          :ok ->
+            Depdep.S3.start()
 
-        case Depdep.S3.list(cfg) do
-          {:ok, objects} -> sweep_objects(cfg, objects, opts)
-          {:error, reason} -> warn("could not list the store (#{reason})")
+            case Depdep.S3.list(cfg) do
+              {:ok, objects} -> sweep_objects(cfg, objects, opts)
+              {:error, reason} -> warn("could not list the store (#{reason})")
+            end
+
+          {:error, reason} ->
+            warn(reason <> " — refusing to sweep")
         end
+    end
+  end
+
+  # The fourth rail (#150): `--confirm` must name the bucket it is about to change,
+  # and the name must be this store's.
+  #
+  # The other three rails guard against acting by accident (`--confirm`), against
+  # the clock (`--grace`) and against an empty live set (`current_roots`). None asks
+  # *which* store, and the answer can arrive from an inherited environment variable
+  # — which is how the group's credentials reached depdep's own CI in #148. The
+  # credential remains the real guard: a pipeline identity cannot delete at all
+  # (measured, 403). This is for the operator who legitimately can.
+  #
+  # Checked before the listing, so a misaimed invocation costs nothing and says so
+  # immediately rather than after a thousand objects have been enumerated.
+  defp aimed_at(cfg, opts) do
+    named = Keyword.get(opts, :bucket)
+
+    cond do
+      # `Depdep.CLI.combination/2` rejects `--confirm` without `--bucket`, so a nil
+      # here is only reachable for a dry run, which changes nothing.
+      is_nil(named) ->
+        :ok
+
+      named == cfg.bucket ->
+        :ok
+
+      true ->
+        {:error, ~s(--bucket says "#{named}" but the store configured here is "#{cfg.bucket}")}
     end
   end
 
