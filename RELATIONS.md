@@ -1397,7 +1397,7 @@ A row per relation. **dangling**: an end changed since it was confirmed (`mix su
 | `test Depdep.MetricsTest: to_map is the wire shape: units survive as plain maps, with both halves intact` |
 | `test Depdep.MixProjectTest: docs are an alias, with the README as the main page` |
 | `test Depdep.MixProjectTest: every before_script in CI fetches dependencies` |
-| `test Depdep.MixProjectTest: every job that sets DEPDEP_STORE clears the inherited separate variables` |
+| `test Depdep.MixProjectTest: every job that sets DEPDEP_STORE unsets the inherited separate variables` |
 | `test Depdep.MixProjectTest: every listed file exists, and the license and changelog are what they claim` |
 | `test Depdep.MixProjectTest: mix docs without the escript names the install command` |
 | `test Depdep.MixProjectTest: mix hex.build ships lib, priv, the profile and the metadata files, and nothing else` |

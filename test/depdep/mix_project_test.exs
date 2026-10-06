@@ -102,32 +102,46 @@ defmodule Depdep.MixProjectTest do
   # #148. depdep's own CI points at a throwaway store with `DEPDEP_STORE`, while
   # the dco-tek group defines the SEPARATE variables unprotected and unscoped so
   # every consumer inherits one shared store. depdep refuses both forms at once
-  # rather than guessing, so a job setting the URL form must clear the inherited
-  # one — and `one_form/0` reads an empty value as absent.
+  # rather than guessing, so a job setting the URL form must get rid of the
+  # inherited one.
+  #
+  # It must `unset` them, NOT set them to "" in `variables:`. **Project and group
+  # CI variables take precedence over a job's own `variables:`** — documented
+  # GitLab behaviour, and the opposite of the intuition. The first fix for this
+  # used `DEPDEP_ACCESS_KEY: ""` and changed nothing: the job still saw the
+  # group's value, and the pipeline failed the same way. This test asserts the
+  # form that works, so that mistake cannot come back.
   #
   # A test rather than a CI-only check, for the reason #124's is: the next group
   # variable someone adds for another project should break this on a developer's
-  # machine, not three steps downstream in a pipeline. The failure it replaces said
-  # "nothing will break", which is true for a consumer and wrong in a test of the
-  # store.
-  test "every job that sets DEPDEP_STORE clears the inherited separate variables" do
-    blocks =
-      ".gitlab-ci.yml"
-      |> File.read!()
+  # machine, not three steps downstream in a pipeline.
+  test "every job that sets DEPDEP_STORE unsets the inherited separate variables" do
+    ci = File.read!(".gitlab-ci.yml")
+
+    jobs =
+      ci
       |> String.split(~r/^[ \t]*variables:[ \t]*$/m)
       |> Enum.drop(1)
       |> Enum.filter(&(&1 =~ "DEPDEP_STORE:"))
 
-    assert blocks != [], "no job sets DEPDEP_STORE — has .gitlab-ci.yml moved?"
+    assert jobs != [], "no job sets DEPDEP_STORE — has .gitlab-ci.yml moved?"
 
-    # The list Depdep.S3 treats as the separate form. DEPDEP_SECRET_KEY is not one
-    # of them: both forms use it, so clearing it would break the job it belongs to.
-    for block <- blocks,
-        name <- ~w(DEPDEP_ENDPOINT DEPDEP_BUCKET DEPDEP_ACCESS_KEY DEPDEP_REGION) do
-      assert block =~ ~r/^\s*#{name}:\s*""\s*$/m,
-             "a job sets DEPDEP_STORE without clearing #{name}. The group defines " <>
-               "these for every project, and depdep refuses two config forms (#148)."
+    # The list `Depdep.S3` treats as the separate form. DEPDEP_SECRET_KEY is not one
+    # of them: both forms use it, so unsetting it would break the job it belongs to.
+    separate = ~w(DEPDEP_ENDPOINT DEPDEP_BUCKET DEPDEP_ACCESS_KEY DEPDEP_REGION)
+
+    unsets = Regex.scan(~r/^\s*- unset ([A-Z_ ]+)$/m, ci)
+    assert length(unsets) >= length(jobs), "a job sets DEPDEP_STORE without an unset line"
+
+    for [_, names] <- unsets, name <- separate do
+      assert name in String.split(names),
+             "an unset line omits #{name}. depdep refuses two config forms (#148), " <>
+               "and the group defines these for every project."
     end
+
+    refute ci =~ ~r/^\s*DEPDEP_(ENDPOINT|BUCKET|ACCESS_KEY|REGION):\s*""\s*$/m,
+           "clearing a store variable in `variables:` does nothing — project and " <>
+             "group variables outrank a job's own. Use `unset` (#148)."
   end
 
   # #124. depdep gained its first dependency in #113, and `mix deps.get` went

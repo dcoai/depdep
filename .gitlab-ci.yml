@@ -128,22 +128,24 @@ profile-instance-check:
     # The URL form (#88) driving a real HTTP server for the first time.
     DEPDEP_STORE: "s3://depdep@s3:9090/depdep-ci"
     DEPDEP_SECRET_KEY: depdep-ci-secret
+  before_script:
     # depdep's own CI uses ITS store, never the group's. The dco-tek group defines
-    # these unprotected and unscoped (every consumer shares one store), so every
-    # job inherits them — and depdep refuses two config forms rather than guessing
-    # which was meant (#148). Cleared rather than overridden: `one_form/0` reads an
-    # empty value as absent.
+    # the separate variables unprotected and unscoped (eight consumers share one
+    # store), so every job inherits them — and depdep refuses two config forms
+    # rather than guessing which was meant (#148).
+    #
+    # `unset`, NOT `VAR: ""` in `variables:`. **Project and group CI variables take
+    # precedence over a job's own `variables:`**, which is the opposite of the
+    # intuition and is documented GitLab behaviour — setting it to "" in the YAML
+    # changed nothing and the job still saw the group's value. before_script and
+    # script share one shell, so unsetting here reaches every command below.
     #
     # All four, though only DEPDEP_ACCESS_KEY conflicts today: centralising
-    # DEPDEP_ENDPOINT and DEPDEP_BUCKET at group level is the sensible thing for
-    # eight consumers sharing one store, and would break these jobs identically.
-    # DEPDEP_SECRET_KEY is deliberately absent — it is not one of the separate
-    # variables, both forms use it, and each job sets its own below.
-    DEPDEP_ENDPOINT: ""
-    DEPDEP_BUCKET: ""
-    DEPDEP_ACCESS_KEY: ""
-    DEPDEP_REGION: ""
-  before_script:
+    # DEPDEP_ENDPOINT and DEPDEP_BUCKET at group level is the sensible thing for a
+    # shared store and would break these jobs identically. DEPDEP_SECRET_KEY is
+    # deliberately kept — it is not one of the separate variables, both forms use
+    # it, and each job sets its own.
+    - unset DEPDEP_ENDPOINT DEPDEP_BUCKET DEPDEP_ACCESS_KEY DEPDEP_REGION
     # Debian images delete a downloaded .deb the moment it is unpacked, which
     # would empty the archives directory before the push could see it. The
     # same line metresis and uficap already carry.
@@ -232,22 +234,24 @@ reclamation:
     JCLOUDS_FILESYSTEM_BASEDIR: /data
     DEPDEP_STORE: "s3://depdep@s3:80/depdep-ci"
     DEPDEP_SECRET_KEY: depdep-ci-secret
+  before_script:
     # depdep's own CI uses ITS store, never the group's. The dco-tek group defines
-    # these unprotected and unscoped (every consumer shares one store), so every
-    # job inherits them — and depdep refuses two config forms rather than guessing
-    # which was meant (#148). Cleared rather than overridden: `one_form/0` reads an
-    # empty value as absent.
+    # the separate variables unprotected and unscoped (eight consumers share one
+    # store), so every job inherits them — and depdep refuses two config forms
+    # rather than guessing which was meant (#148).
+    #
+    # `unset`, NOT `VAR: ""` in `variables:`. **Project and group CI variables take
+    # precedence over a job's own `variables:`**, which is the opposite of the
+    # intuition and is documented GitLab behaviour — setting it to "" in the YAML
+    # changed nothing and the job still saw the group's value. before_script and
+    # script share one shell, so unsetting here reaches every command below.
     #
     # All four, though only DEPDEP_ACCESS_KEY conflicts today: centralising
-    # DEPDEP_ENDPOINT and DEPDEP_BUCKET at group level is the sensible thing for
-    # eight consumers sharing one store, and would break these jobs identically.
-    # DEPDEP_SECRET_KEY is deliberately absent — it is not one of the separate
-    # variables, both forms use it, and each job sets its own below.
-    DEPDEP_ENDPOINT: ""
-    DEPDEP_BUCKET: ""
-    DEPDEP_ACCESS_KEY: ""
-    DEPDEP_REGION: ""
-  before_script:
+    # DEPDEP_ENDPOINT and DEPDEP_BUCKET at group level is the sensible thing for a
+    # shared store and would break these jobs identically. DEPDEP_SECRET_KEY is
+    # deliberately kept — it is not one of the separate variables, both forms use
+    # it, and each job sets its own.
+    - unset DEPDEP_ENDPOINT DEPDEP_BUCKET DEPDEP_ACCESS_KEY DEPDEP_REGION
     - apt-get update && apt-get install -y --no-install-recommends git curl
     - mix local.hex --force && mix local.rebar --force
     # See the note in apt-round-trip: an overriding `before_script` replaces the
