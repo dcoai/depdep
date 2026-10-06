@@ -11,7 +11,7 @@ defmodule Depdep.MixProjectTest do
     assert %{"Source" => "https://" <> _} = package[:links]
 
     assert package[:files] ==
-             ~w(lib priv mix.exs README.md LICENSE CHANGELOG.md .formatter.exs)
+             ~w(lib priv guide mix.exs README.md LICENSE CHANGELOG.md .formatter.exs)
   end
 
   test "every listed file exists, and the license and changelog are what they claim" do
@@ -28,7 +28,13 @@ defmodule Depdep.MixProjectTest do
   test "docs are an alias, with the README as the main page" do
     assert is_function(project()[:aliases][:docs], 1)
     assert project()[:docs][:main] == "readme"
-    assert project()[:docs][:extras] == ["README.md", "CHANGELOG.md"]
+    # The guide is numbered and `Path.wildcard/1` sorts, so hexdocs lists the
+    # pages in reading order. The README stays first and the changelog last.
+    extras = project()[:docs][:extras]
+    assert hd(extras) == "README.md"
+    assert List.last(extras) == "CHANGELOG.md"
+    assert Enum.slice(extras, 1..-2//1) == Path.wildcard("guide/[0-9]*.md")
+    refute Enum.empty?(Path.wildcard("guide/[0-9]*.md"))
   end
 
   # The escript is installed by hand, so its absence is the likeliest way
@@ -66,6 +72,20 @@ defmodule Depdep.MixProjectTest do
 
     [first_install | _] = Regex.scan(~r/Mix\.install\(\[\{:depdep, ([^}]+)\}\]\)/, readme)
     assert [_, ~s("~> ) <> _] = first_install
+  end
+
+  # The guide ships in the package and appears on hexdocs beside the README, so
+  # the same rule binds it. Nothing checked the guide when it was created, and a
+  # private host added to a guide page would have reached hexdocs silently.
+  test "no shipped guide page points at the private host" do
+    pages = Path.wildcard("guide/[0-9]*.md")
+    refute Enum.empty?(pages), "the guide is listed in the package but has no pages"
+
+    for page <- pages do
+      body = File.read!(page)
+      refute body =~ "conet.yarina.org", "#{page} names the private host"
+      refute body =~ "dco-tek", "#{page} names the private group"
+    end
   end
 
   # spec/01-goals-and-scope.md#zero-runtime-deps. Depdep runs before
