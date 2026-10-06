@@ -4,6 +4,61 @@ What changed for a user of depdep, per release. Each version is a git tag;
 the four earliest also carry GitLab release notes, from which these entries
 are condensed. Issue numbers are dco-tek/depdep's.
 
+## v0.10.0 — 2026-10-06
+
+**No object path changes, so no refill.** Keys are unchanged; schema stays `v3`.
+As with v0.9.0, objects already in the store become usable rather than needing a
+re-push.
+
+One fix, and it is the **second** cause of the same symptom v0.9.0 addressed. If a
+project still sees `restored, but Mix would rebuild it` on a **git** dependency
+after pinning v0.9.0, this is why.
+
+### Fixed
+
+- **A restored git dependency adopts the restoring project's `origin`** (#144, for
+  #123). An object's git checkout carries the *pusher's* `origin`, and Mix compares
+  it: `Mix.SCM.Git.lock_status/1` requires the lock's URL to equal
+  `remote.origin.url` **as strings**. So a consumer that writes
+  `https://host/org/dep.git` where the pusher wrote `git@host:org/dep.git` was told
+  the dependency was out of date — the same sentence Mix uses for a genuine lock
+  difference, which is why this and #131 were one symptom with two causes.
+
+  The URL stays out of the key: for a git entry the commit sha is the content
+  identity, so one object serves every spelling rather than storing the same commit
+  once per way of writing its address. The address is corrected on the way in
+  instead.
+
+  Measured in the production store, not inferred: `extla`'s objects for one commit
+  exist under both `git@…:dco-tek/extla.git` and `https://…/dco-tek/extla.git`,
+  while `extc` locks the https spelling and `visualize`, `visualize2` and `exio`
+  lock the ssh one.
+
+  Fail-safe, as everywhere else: if the rewrite cannot be done the unit becomes a
+  miss and is compiled. A checkout with no `.git` is left alone and the restore
+  check turns Mix's rebuild into a miss with Mix's own reason. A hex dependency
+  runs no git command.
+
+### Documentation
+
+- **The README's Status section reads as the fleet measures** (#143, for #142). It
+  led with the best result ever recorded — `~28 minutes to 6m24s`, labelled
+  *Measured* — with nothing beside it to calibrate against. That figure is true of
+  the poncho depdep was extracted from and is kept, now labelled a **ceiling**,
+  with the current per-consumer net beside it as the expectation: **+8 s to +126 s**
+  per pipeline. Current refused-restore counts replace "with zero dependencies
+  recompiled", and the `564 byte-identical keys` sentence says what it actually
+  showed — that extracting depdep changed no key — rather than vouching for rules
+  that have since moved to schema `v3`. Every figure carries its date and how to
+  re-take it.
+
+- **The production `--report` is recorded** (#41, closing a check left open since
+  v0.1.0). `--report` had never run against a real bucket; it has now. 922 roots,
+  `apt/v1` 269 objects / 211.1 MiB, `v2` 569 objects / 1229.4 MiB with **451.9 MiB
+  unreachable** — the largest reclaimable thing in the store, waiting on consumers
+  leaving v0.6.0 (#140). With the concurrency A/B and the standing apt round-trip
+  job, all three claims that shipped unverified are now measured.
+
 ## v0.9.0 — 2026-10-04
 
 **No object path changes, so no refill.** Keys are unchanged; schema stays `v3`.
