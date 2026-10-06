@@ -244,7 +244,8 @@ and each skip names what it could not key
 
 ## What an object carries and the key does not hash {#not-hashed}
 
-Two things travel inside an object deliberately unhashed.
+Three things travel inside an object deliberately unhashed. The first two are
+inert. The third is compared by Mix, and so has to be rewritten on the way in.
 
 Mix's Erlang compiler manifest records the **pusher's absolute beam paths**. It
 is read only when Mix decides to recompile the dependency, and then it makes Mix
@@ -255,6 +256,31 @@ compiled in, and Mix checks it only when compiling.
 Neither changes what a restored dependency *is*, so neither belongs in the key.
 What notices that Mix would rebuild a restored unit — for these reasons or any
 other — is the restore check, specified in `spec/06-the-run.md`.
+
+**A git dependency's object also carries the pusher's `origin`, and this one
+cannot be left alone.** For a git entry the content identity is the commit sha,
+so the repository's address is not a key input — one object serves every way of
+spelling it, rather than the same commit being stored once per spelling. But Mix
+compares that address: `Mix.SCM.Git.lock_status/1` requires the lock's URL to
+equal the checkout's `remote.origin.url` **as strings**, so a consumer that
+writes `https://host/org/dep.git` where the pusher wrote
+`git@host:org/dep.git` is told the dependency is out of date and refuses to
+continue.
+
+So **a restored git checkout's `origin` is set to the restoring project's own
+lock URL**, before Mix reads it. The sha still decides what the object is; the
+address is the consumer's own business.
+
+If that cannot be done, the unit is a miss and is compiled. Leaving a foreign
+origin in place is the one outcome ruled out: it costs a pipeline the rebuild it
+was trying to avoid, and the operator a defect that looks identical to a genuine
+lock difference — because Mix reports both with the same sentence.
+
+```test restored-git-origin-adopted
+given a git dependency whose stored object carries another project's origin
+and a lockfile naming the same commit under a different spelling of the URL
+then Mix rejects the checkout before the restore and accepts it after
+```
 
 ## Where an object lives {#object-path}
 

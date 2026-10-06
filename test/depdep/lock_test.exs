@@ -42,6 +42,17 @@ defmodule Depdep.LockTest do
     assert {:error, _} = write_and_read(":not_a_map\n")
   end
 
+  # #123: the URL is read on restore, to point the checkout at this consumer's
+  # spelling of the repository. It is deliberately not a key input — the sha is
+  # the content identity, so one object serves every spelling.
+  test "repo/1 is a git entry's URL, and nil for a hex entry" do
+    {_, entry} = git("heroicons")
+    assert Depdep.Lock.repo(entry) == "https://example.invalid/heroicons.git"
+
+    {_, hex} = hex("jason", "1.4.4", [])
+    assert Depdep.Lock.repo(hex) == nil
+  end
+
   # A git entry carries url, ref and opts and no dependency list; its children
   # are Mix's once fetched (`Depdep.Deps`), unknown until then.
   test "a git entry's children are unknown until Mix has fetched it" do
