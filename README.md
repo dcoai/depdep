@@ -55,8 +55,9 @@ dependency needs that whole input closure.
 A CI cache is one opaque archive per key, restored wholesale, after which Mix
 decides what is stale by comparing source mtimes against build manifests. **A
 cache restore steps around the machinery Mix uses to stay correct**, and the
-failure is silent: you get a build that compiles clean, passes its tests, and is
-wrong.
+failure is silent: you get a build that compiles clean, passes its tests, and
+could be wrong. It often isn't — the point is that nothing tells you it is
+correct, so you cannot know either way.
 
 Depdep's key is computed from the inputs, so a stored object either matches what
 you would have built or is not returned at all.
