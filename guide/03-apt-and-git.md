@@ -92,10 +92,10 @@ clone against a restored mirror   0.57 s
 ```
 
 **A stale mirror is not a wrong answer, and that is the whole design.** A wrong
-mix object is a build that compiles clean, passes its tests and is wrong — which
-is why `Depdep.Key` recurses over the entire input closure. A mirror is only a
-*seed*: whatever it holds, your own clone reconciles it against the real remote,
-so an out-of-date mirror costs a slightly larger transfer and nothing else.
+mix object still compiles clean and still passes its tests — which is why
+`Depdep.Key` recurses over the entire input closure. A mirror is only a *seed*:
+whatever it holds, your own clone reconciles it against the real remote, so an
+out-of-date mirror costs a slightly larger transfer and nothing else.
 
 That is what lets the key be cheap. An object is keyed on the repository and the
 **month**, not on a commit:

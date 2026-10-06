@@ -12,9 +12,11 @@ defmodule Depdep.Provider.Git do
   ## A stale mirror is not a wrong answer
 
   This is the fact the whole design rests on, and it is the opposite of the Mix
-  provider's situation. A wrong Mix object is a build that compiles clean,
-  passes its tests, and is wrong — which is why `Depdep.Key` recurses over the
-  entire input closure. A mirror is only a SEED: whatever it contains, the
+  provider's situation, where a wrong object still compiles clean and still
+  passes its tests — which is why `Depdep.Key` recurses over the entire input
+  closure. The rule is normative in `spec/05-units-and-providers.md#git`.
+
+  A mirror is only a SEED: whatever it contains, the
   consumer's own fetch reconciles it against the real remote. An out-of-date
   mirror costs a larger delta and nothing else. There is no silent-wrong-answer
   failure mode to defend against.

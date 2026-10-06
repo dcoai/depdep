@@ -102,11 +102,11 @@ than a network transfer. The consumer clones against one with
 at putting something on disk — **it never clones a repository for anyone**.
 
 **A stale mirror is not a wrong answer**, and this is the fact the whole design
-rests on. It is the opposite of the mix provider's situation. A wrong mix object
-is a build that compiles clean, passes its tests and is wrong. A mirror is only a
-*seed*: whatever it contains, the consumer's own fetch reconciles it against the
-real remote. An out-of-date mirror costs a larger delta and nothing else. There
-is no silent-wrong-answer failure mode here to defend against.
+rests on. It is the opposite of the mix provider's situation, where a wrong object
+still compiles clean and still passes its tests. A mirror is only a *seed*:
+whatever it contains, the consumer's own fetch reconciles it against the real
+remote. An out-of-date mirror costs a larger delta and nothing else. There is no
+silent-wrong-answer failure mode here to defend against.
 
 That is what makes the key cheap. Objects are keyed on the repository and a
 monthly **epoch** rather than on a commit: `Depdep.Provider.Git.epoch/0` is the

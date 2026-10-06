@@ -31,6 +31,10 @@ defmodule Depdep.Provider.GitTest do
   describe "slug/1" do
     # The same repository reached two ways is one repository. Storing it twice
     # would waste the space AND misreport what is cached.
+    # `slug/1` is one of the three functions `#git` names, and nothing verified the
+    # section before #154. This covers the claim that the slug names the REPOSITORY
+    # rather than the URL that reached it.
+    @tag verifies: "spec/05-units-and-providers.md#git"
     test "https and ssh forms of one repository agree" do
       assert Git.slug("https://gitlab.example.com/group/proj.git") ==
                Git.slug("git@gitlab.example.com:group/proj.git")
@@ -58,6 +62,11 @@ defmodule Depdep.Provider.GitTest do
       assert Git.enumerate(direction: :pull) == {:ok, [], []}
     end
 
+    # The section's normative claim about the key: repository plus a monthly epoch
+    # rather than a commit, which is what a stale mirror being harmless buys. Nothing
+    # verified `#git` before this (#154) — the section's four `implements` relations
+    # had no test behind them, so a rewording of it could not be reviewed.
+    @tag verifies: "spec/05-units-and-providers.md#git"
     test "one unit per repository, keyed on the epoch" do
       assert {:ok, [unit], []} =
                Git.enumerate(direction: :pull, repo: "https://h/a.git", git_mirror_dir: "/tmp/m")
@@ -127,6 +136,10 @@ defmodule Depdep.Provider.GitTest do
       assert File.regular?(Path.join(Git.mirror_path(unit), "HEAD"))
     end
 
+    # `mirror_path/1` is the third function `#git` names — "where a mirror lands" —
+    # and this is the test that asserts something really lands there and is a usable
+    # repository rather than a directory of files (#154).
+    @tag verifies: "spec/05-units-and-providers.md#git"
     test "a restored mirror is a sound repository, not just some files", ctx do
       assert Git.collect(unit_for(ctx.source, ctx.collect_dir, :push), ctx.tmp) == :ok
 
