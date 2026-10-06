@@ -95,9 +95,21 @@ A CI cache is one opaque archive per key, restored wholesale, after which Mix
 decides what is stale by comparing source mtimes against build manifests.
 
 **A cache restore steps around the machinery Mix uses to stay correct**, and the
-failure is silent: a build that compiles clean, passes its tests, and is wrong.
-The measured instance is recorded in `spec/03-keys.md#recursion` —
-`Ash.Type.File.Source` resolving to `Any` while 106 of 106 tests passed.
+failure is silent: a build that compiles clean, passes its tests, and could be
+wrong. It often is not — the point is that nothing tells you it is correct, so
+there is no way to know either way.
+
+**That an invisible wrong restore is possible is measured, not supposed.** Depdep
+produced one: a lockfile's quoted-atom keys mean `%{"ash": v}` parses as
+`%{ash: v}`, so every `Map.has_key?(lock, "plug")` answered false, every optional
+dependency looked unresolved, and every build of a package with optional
+dependencies collapsed to one key. In `dco-tek/bizex` one such build compiled in
+2.3 s and passed **106 of 106 tests** while `Ash.Type.File.Source` silently
+resolved to `Any`. `Depdep.Lock` normalises those keys for exactly this reason.
+
+That instance is evidence that a wrong restore is undetectable by testing. It is
+*not* evidence for any particular key rule — it was a lockfile-parsing defect, not
+a missing recursion — and it should not be cited as though it were.
 
 Depdep's key is computed from inputs, so a stored object either matches what
 would have been built or is not returned at all. That is the whole difference,

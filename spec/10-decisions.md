@@ -28,10 +28,11 @@ Output hashes address objects. Input hashes are keys.
 ## The key recurses {#recursion}
 
 Reversing this is the single most expensive mistake available here, because the
-failure is silent: a build that compiles clean, passes its tests and is wrong.
-The argument is in `spec/03-keys.md#recursion`, and the measured instance —
-`Ash.Type.File.Source` resolving to `Any` while 106 of 106 tests passed — is why
-it is stated as a decision rather than an optimisation.
+failure is silent: a wrong build compiles clean and passes its tests. The argument
+is in `spec/03-keys.md#recursion`, and what makes it a decision rather than an
+optimisation is that the failure it prevents is undetectable by testing —
+`spec/00-prior-art.md#ci-caches` records depdep's own measured instance of exactly
+that, though of a different defect.
 
 ## The key's inputs are Mix's own {#mix-inputs}
 
