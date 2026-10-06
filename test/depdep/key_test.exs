@@ -62,6 +62,40 @@ defmodule Depdep.KeyTest do
              "the recursive key must tell apart what the flat key cannot"
     end
 
+    # The flat key is not a straw man: it is what MIX itself compares (#158).
+    # `Mix.Dep.Loader.validate_manifest/1` gives a dependency status `:compile` when
+    # the build's recorded `opts[:lock]` differs from the current one — the
+    # dependency's OWN lock tuple, nothing about its siblings. A hex tuple carries its
+    # dependencies as REQUIREMENTS (`{:child, ">= 0.0.0", …}`), not as resolved
+    # versions, so bumping a child leaves the parent's tuple byte-identical and Mix
+    # sees nothing to do.
+    #
+    # That is the gap the recursion covers, and it is why the key cannot simply be the
+    # thing Mix already checks.
+    @tag verifies: "recursion-covers-what-mix-does-not"
+    test "the parent's own lock tuple — what Mix compares — does not move when a child does" do
+      before = [hex("ash", "3.32.3", ["spark"]), hex("spark", "2.6.0", [])]
+      later = [hex("ash", "3.32.3", ["spark"]), hex("spark", "2.7.0", [])]
+
+      entry = fn lock ->
+        {_, e} = Enum.find(lock, fn {name, _} -> name == "ash" end)
+        e
+      end
+
+      assert entry.(before) == entry.(later),
+             "ash's lock tuple moved, so Mix would have caught this without the recursion"
+
+      # And the child's did move, so the two states really are different builds.
+      child = fn lock ->
+        {_, e} = Enum.find(lock, fn {name, _} -> name == "spark" end)
+        e
+      end
+
+      refute child.(before) == child.(later)
+
+      refute key(before, "ash") == key(later, "ash")
+    end
+
     # Why the hash must recurse rather than cover the whole lockfile: precision.
     # A whole-lock digest would invalidate every package on any change at all.
     @tag verifies: "recursion-precision"

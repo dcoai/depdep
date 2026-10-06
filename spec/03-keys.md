@@ -67,10 +67,37 @@ recompiles dependents. **A cache restore steps around that machinery entirely.**
 The key therefore has to re-establish, at the cache layer, the invariant Mix
 maintains at the compile layer. That is the whole argument for the recursion.
 
+**What Mix checks for a dependency is narrower than what it checks for your own
+code, and that is the gap.** `Mix.Dep.Loader.validate_manifest/1` gives a
+dependency status `:compile` when the build's recorded `{elixir, otp}`, `scm` or
+`opts[:lock]` differ from the current ones — and `opts[:lock]` is the
+dependency's **own** lock tuple. A hex tuple carries its dependencies as
+*requirements* (`{:child, ">= 0.0.0", …}`), never as resolved versions, so bumping
+a child leaves the parent's tuple byte-identical and Mix sees nothing to do. The
+alternative key the recursion replaces is therefore not a straw man: it is
+precisely what Mix already compares.
+
+**How far this is demonstrated, as of 2026-10-06.** That the keys collide, and that
+the parent's own lock tuple does not move while its child's does, are asserted by
+the two hints below. A *running* stale build has **not** been reproduced here. Two attempts with path dependencies both ended with Mix
+correctly recompiling the parent, which is explained rather than mysterious:
+`validate_manifest/1` only sets `:compile` when `scm.fetchable?()`, and
+`Mix.SCM.Path.fetchable?` is `false`, so a path dependency is checked by its source
+instead and never takes this route. Reproducing it needs two real hex packages
+whose macro output differs — the spark/ash case this section describes — and that
+has not been done. The mechanism is read from Mix's source and the collisions are
+measured; the end-to-end wrong build is argued, not observed.
+
 The recursion is also what buys **precision**. The other sound key — hash the
 whole lockfile — invalidates every package on any lock change whatsoever. Under
 the recursion, bumping `spark` invalidates spark and the packages above it and
 leaves `postgrex`, `telemetry` and `bcrypt_elixir` alone.
+
+```test recursion-covers-what-mix-does-not
+given two locks differing only in a transitive dependency
+then the parent's own lock tuple — what validate_manifest/1 compares — is identical
+and the child's entry did move, so the two states are genuinely different builds
+```
 
 ```test recursion-prevents-a-flat-collision
 given two locks differing only in a transitive dependency
