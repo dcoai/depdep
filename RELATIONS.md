@@ -1401,6 +1401,7 @@ A row per relation. **dangling**: an end changed since it was confirmed (`mix su
 | `test Depdep.MixProjectTest: every listed file exists, and the license and changelog are what they claim` |
 | `test Depdep.MixProjectTest: mix docs without the escript names the install command` |
 | `test Depdep.MixProjectTest: mix hex.build ships lib, priv, the profile and the metadata files, and nothing else` |
+| `test Depdep.MixProjectTest: no shipped guide page points at the private host` |
 | `test Depdep.MixProjectTest: the README is written for a reader outside the private network` |
 | `test Depdep.MixProjectTest: the built package declares no dependencies to hex` |
 | `test Depdep.MixProjectTest: the package is MIT, links its source, and lists its files explicitly` |

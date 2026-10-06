@@ -20,7 +20,7 @@ defmodule Depdep.MixProject do
       source_url: @source_url,
       package: package(),
       aliases: [docs: &docs/1],
-      docs: [main: "readme", extras: ["README.md", "CHANGELOG.md"]]
+      docs: [main: "readme", extras: docs_extras()]
     ]
   end
 
@@ -32,6 +32,11 @@ defmodule Depdep.MixProject do
     [extra_applications: [:inets, :ssl, :crypto, :xmerl]]
   end
 
+  # The guide pages are numbered, and `Path.wildcard/1` sorts, so hexdocs lists
+  # them in reading order without the order being restated here.
+  defp docs_extras,
+    do: ["README.md"] ++ Path.wildcard("guide/[0-9]*.md") ++ ["CHANGELOG.md"]
+
   # Fixtures for the key rules live in test/support so they can be shared between
   # test files without being compiled into the package.
   defp elixirc_paths(:test), do: ["lib", "test/support"]
@@ -42,7 +47,7 @@ defmodule Depdep.MixProject do
   # Depdep runs BEFORE `mix deps.get` — that is the whole point of it — so a
   # runtime dependency would have to be fetched by the very machinery this
   # exists to get in front of. Signature v4 is about sixty lines; `:httpc` and
-  # `:erl_tar` ship with OTP. See README, "Why no dependencies".
+  # `:erl_tar` ship with OTP. See guide/05-design.md, "Why no dependencies".
   #
   # That constraint has not moved. What #113 changed is the assertion guarding
   # it: `mix_project_test.exs` used to check that this list was empty, which is
@@ -71,7 +76,7 @@ defmodule Depdep.MixProject do
     [
       licenses: ["MIT"],
       links: %{"Source" => @source_url},
-      files: ~w(lib priv mix.exs README.md LICENSE CHANGELOG.md .formatter.exs)
+      files: ~w(lib priv guide mix.exs README.md LICENSE CHANGELOG.md .formatter.exs)
     ]
   end
 
