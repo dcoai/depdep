@@ -99,6 +99,37 @@ defmodule Depdep.MixProjectTest do
     end
   end
 
+  # #148. depdep's own CI points at a throwaway store with `DEPDEP_STORE`, while
+  # the dco-tek group defines the SEPARATE variables unprotected and unscoped so
+  # every consumer inherits one shared store. depdep refuses both forms at once
+  # rather than guessing, so a job setting the URL form must clear the inherited
+  # one — and `one_form/0` reads an empty value as absent.
+  #
+  # A test rather than a CI-only check, for the reason #124's is: the next group
+  # variable someone adds for another project should break this on a developer's
+  # machine, not three steps downstream in a pipeline. The failure it replaces said
+  # "nothing will break", which is true for a consumer and wrong in a test of the
+  # store.
+  test "every job that sets DEPDEP_STORE clears the inherited separate variables" do
+    blocks =
+      ".gitlab-ci.yml"
+      |> File.read!()
+      |> String.split(~r/^[ \t]*variables:[ \t]*$/m)
+      |> Enum.drop(1)
+      |> Enum.filter(&(&1 =~ "DEPDEP_STORE:"))
+
+    assert blocks != [], "no job sets DEPDEP_STORE — has .gitlab-ci.yml moved?"
+
+    # The list Depdep.S3 treats as the separate form. DEPDEP_SECRET_KEY is not one
+    # of them: both forms use it, so clearing it would break the job it belongs to.
+    for block <- blocks,
+        name <- ~w(DEPDEP_ENDPOINT DEPDEP_BUCKET DEPDEP_ACCESS_KEY DEPDEP_REGION) do
+      assert block =~ ~r/^\s*#{name}:\s*""\s*$/m,
+             "a job sets DEPDEP_STORE without clearing #{name}. The group defines " <>
+               "these for every project, and depdep refuses two config forms (#148)."
+    end
+  end
+
   # #124. depdep gained its first dependency in #113, and `mix deps.get` went
   # into the `default:` `before_script`. A job that defines its OWN
   # `before_script` replaces the default's rather than extending it, so two jobs

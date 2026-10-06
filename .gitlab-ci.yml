@@ -128,6 +128,21 @@ profile-instance-check:
     # The URL form (#88) driving a real HTTP server for the first time.
     DEPDEP_STORE: "s3://depdep@s3:9090/depdep-ci"
     DEPDEP_SECRET_KEY: depdep-ci-secret
+    # depdep's own CI uses ITS store, never the group's. The dco-tek group defines
+    # these unprotected and unscoped (every consumer shares one store), so every
+    # job inherits them — and depdep refuses two config forms rather than guessing
+    # which was meant (#148). Cleared rather than overridden: `one_form/0` reads an
+    # empty value as absent.
+    #
+    # All four, though only DEPDEP_ACCESS_KEY conflicts today: centralising
+    # DEPDEP_ENDPOINT and DEPDEP_BUCKET at group level is the sensible thing for
+    # eight consumers sharing one store, and would break these jobs identically.
+    # DEPDEP_SECRET_KEY is deliberately absent — it is not one of the separate
+    # variables, both forms use it, and each job sets its own below.
+    DEPDEP_ENDPOINT: ""
+    DEPDEP_BUCKET: ""
+    DEPDEP_ACCESS_KEY: ""
+    DEPDEP_REGION: ""
   before_script:
     # Debian images delete a downloaded .deb the moment it is unpacked, which
     # would empty the archives directory before the push could see it. The
@@ -165,7 +180,15 @@ apt-round-trip:
     - test -n "$(ls /var/cache/apt/archives/*.deb 2>/dev/null)"
 
     # 2. Into the store, and out of the cache.
-    - mix run -e 'Depdep.CLI.main(["--push", "--provider", "apt"])'
+    #
+    #    The push's own output is asserted, because a store depdep declines to use
+    #    makes it skip and exit 0 — "nothing will break", which is the right answer
+    #    for a consumer and the wrong one in a test OF the store. Without this the
+    #    first sign is the restore finding no .deb, three steps and one misleading
+    #    message away from the cause (#148).
+    - mix run -e 'Depdep.CLI.main(["--push", "--provider", "apt"])' 2>&1 | tee /tmp/push.log
+    - "! grep -q 'store not configured' /tmp/push.log"
+    - grep -qE 'uploaded [1-9]' /tmp/push.log
     - rm -f /var/cache/apt/archives/*.deb
 
     # 3. Back from the store.
@@ -209,6 +232,21 @@ reclamation:
     JCLOUDS_FILESYSTEM_BASEDIR: /data
     DEPDEP_STORE: "s3://depdep@s3:80/depdep-ci"
     DEPDEP_SECRET_KEY: depdep-ci-secret
+    # depdep's own CI uses ITS store, never the group's. The dco-tek group defines
+    # these unprotected and unscoped (every consumer shares one store), so every
+    # job inherits them — and depdep refuses two config forms rather than guessing
+    # which was meant (#148). Cleared rather than overridden: `one_form/0` reads an
+    # empty value as absent.
+    #
+    # All four, though only DEPDEP_ACCESS_KEY conflicts today: centralising
+    # DEPDEP_ENDPOINT and DEPDEP_BUCKET at group level is the sensible thing for
+    # eight consumers sharing one store, and would break these jobs identically.
+    # DEPDEP_SECRET_KEY is deliberately absent — it is not one of the separate
+    # variables, both forms use it, and each job sets its own below.
+    DEPDEP_ENDPOINT: ""
+    DEPDEP_BUCKET: ""
+    DEPDEP_ACCESS_KEY: ""
+    DEPDEP_REGION: ""
   before_script:
     - apt-get update && apt-get install -y --no-install-recommends git curl
     - mix local.hex --force && mix local.rebar --force
