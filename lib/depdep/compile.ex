@@ -45,7 +45,20 @@ defmodule Depdep.Compile do
   def select(units, missing_labels) when is_list(missing_labels),
     do: select(units, &(Unit.label(&1) in missing_labels))
 
-  def select(units, missing?) when is_function(missing?, 1), do: Enum.filter(units, missing?)
+  def select(units, missing?) when is_function(missing?, 1),
+    do: units |> Enum.reject(&source?/1) |> Enum.filter(missing?)
+
+  # **A source unit is never compiled** (#164). `run/2` turns each unit's `:name` into an
+  # argument for `mix deps.compile`, and a git dependency's source is not a thing Mix can
+  # be asked to compile — `mix deps.compile "heroicons (source)"` would fail, and
+  # `--compile-deps` makes Mix's exit status the run's, so it would fail the consumer's
+  # pipeline. A missed source is fetched by `mix deps.get` instead, which is the one
+  # thing that was going to happen anyway.
+  #
+  # Rejected here rather than at the caller: this is the function whose output becomes
+  # an argv, so this is where the invariant belongs.
+  defp source?(%Unit{context: %{kind: :source}}), do: true
+  defp source?(%Unit{}), do: false
 
   @doc """
   Compiles `units` (misses of the mix provider, any members), returning

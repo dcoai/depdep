@@ -17,6 +17,7 @@ defmodule Depdep.Provider.Mix do
 
   @behaviour Depdep.Provider
 
+  alias Depdep.Provider.Mix.Source
   alias Depdep.Unit
 
   @impl true
@@ -89,6 +90,41 @@ defmodule Depdep.Provider.Mix do
         }
       }
     end)
+    |> then(&(&1 ++ source_units(project, project_dir, deps, direction)))
+  end
+
+  # **A git dependency's SOURCE, restorable in the first pass** (#164, for #151). Its
+  # build is still skipped here — its children are unknown until `mix deps.get` — but
+  # its source needs none of that: the lock names an exact commit, so
+  # `Depdep.Provider.Mix.Source` keys it without recursion. Restored before `deps.get`,
+  # Mix finds the checkout at the locked rev and does not clone it, which is about 35 s
+  # of a 52 s fully warm run on dco-tek/snow-removal-tracker-ex.
+  #
+  # The name carries `(source)` so the label does not collide with the build unit's.
+  # `Depdep.Unit.label/1` keys the restore check, the second pass and the compile
+  # selection, and two units of one dependency sharing a label would silently overwrite
+  # each other in all three. Build-unit labels are untouched, which also keeps the
+  # metrics metresis already holds continuous.
+  defp source_units(project, project_dir, deps, direction) do
+    for {name, %{entry: entry}} <- Enum.sort(deps),
+        {:ok, commit} <- [Source.commit(entry)],
+        {:ok, object} <- [Source.object(entry)] do
+      %Unit{
+        group: project,
+        name: "#{name} (source)",
+        detail: String.slice(commit, 0, 12),
+        resolution: {:key, commit},
+        object: object,
+        context: %{
+          kind: :source,
+          project_dir: project_dir,
+          name: name,
+          commit: commit,
+          direction: direction,
+          git_origin: Depdep.Lock.repo(entry)
+        }
+      }
+    end
   end
 
   # A dependency this env never builds is decided before its key matters: there
@@ -128,12 +164,32 @@ defmodule Depdep.Provider.Mix do
   # Called before `Depdep.Report.outcome/3` decides anything, so it is reached
   # for skipped units too. Its value is unused for those.
   def present?(%Unit{resolution: {:skip, _reason}}), do: false
+  # A source is present when the checkout is at the locked commit. Asked of git rather
+  # than recorded in a note: the commit IS the identity, so git already holds the answer
+  # and a note could disagree with the checkout beside it.
+  def present?(%Unit{context: %{kind: :source, commit: commit}} = unit),
+    do: head_of(checkout(unit)) == {:ok, commit}
+
   def present?(%Unit{resolution: {:not_for_env, _env}}), do: false
 
   def present?(%Unit{context: %{direction: :push}} = unit), do: trees?(unit)
 
   def present?(%Unit{resolution: {:key, hash}} = unit),
     do: trees?(unit) and recorded_key(unit) == hash
+
+  defp project_dir(%Unit{context: %{project_dir: dir}}), do: dir
+
+  defp checkout(%Unit{context: %{project_dir: dir, name: name}}),
+    do: Path.join([dir, "deps", name])
+
+  # `git rev-parse HEAD` in the checkout, or `:error` for anything that is not a
+  # repository at a commit — which includes an absent directory, so no File check first.
+  defp head_of(checkout) do
+    case System.cmd("git", ["-C", checkout, "rev-parse", "HEAD"], stderr_to_stdout: true) do
+      {out, 0} -> {:ok, String.trim(out)}
+      {_out, _status} -> :error
+    end
+  end
 
   defp trees?(%Unit{context: %{project_dir: dir, name: name, build_path: build_path}}),
     do: Depdep.Archive.complete?(dir, name, build_path)
@@ -154,6 +210,16 @@ defmodule Depdep.Provider.Mix do
   #
   # So the origin is rewritten to THIS consumer's lock URL on the way in. A hex
   # dependency has no `git_origin` and no git command runs for it.
+  # The source's one tree is `deps/<name>`, with its `.git`. The origin is adopted the
+  # way a restored build's is (#144): the object carries the pusher's, and Mix compares
+  # it as a string.
+  @impl true
+  def restore(%Unit{context: %{kind: :source, name: name}} = unit, tmp) do
+    with :ok <- Depdep.Archive.extract(tmp, project_dir(unit), [Path.join("deps", name)]) do
+      adopt_origin(unit)
+    end
+  end
+
   @impl true
   def restore(%Unit{context: %{project_dir: dir, name: name, build_path: build_path}} = unit, tmp) do
     with :ok <- Depdep.Archive.extract(tmp, dir, Depdep.Archive.trees(name, build_path)) do
@@ -190,8 +256,23 @@ defmodule Depdep.Provider.Mix do
   end
 
   @impl true
+  def collect(%Unit{context: %{kind: :source, name: name}} = unit, tmp),
+    do:
+      Depdep.Archive.create_trees(
+        project_dir(unit),
+        [Path.join("deps", name)],
+        tmp,
+        "#{name}'s source"
+      )
+
+  @impl true
   def collect(%Unit{context: %{project_dir: dir, name: name, build_path: build_path}}, tmp),
     do: Depdep.Archive.create(dir, name, build_path, tmp)
+
+  # Nothing to record: `present?` asks git for the commit, so there is no note that
+  # could drift from the checkout.
+  @impl true
+  def record(%Unit{context: %{kind: :source}}), do: :ok
 
   @impl true
   def record(%Unit{resolution: {:skip, _reason}}), do: :ok
