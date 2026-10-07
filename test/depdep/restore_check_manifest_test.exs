@@ -71,6 +71,77 @@ defmodule Depdep.RestoreCheck.ManifestTest do
     end
   end
 
+  # #162: the compile env is the other cause of "the dependency compile environment is
+  # outdated", read from the build's own `.app` the way Mix reads it.
+  describe "compile_env/2 and compile_env_differences/1" do
+    setup do
+      build = Path.join(System.tmp_dir!(), "cenv-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(Path.join(build, "ebin"))
+      on_exit(fn -> File.rm_rf!(build) end)
+      on_exit(fn -> Application.delete_env(:a_fake_dep, :a_setting, persistent: true) end)
+      %{build: build}
+    end
+
+    defp app_file(build, app, properties) do
+      File.write!(
+        Path.join([build, "ebin", "#{app}.app"]),
+        :io_lib.format(~c"~p.", [{:application, app, properties}]) |> IO.iodata_to_binary()
+      )
+    end
+
+    test "entries are read from the .app", ctx do
+      entries = [{:a_fake_dep, [:a_setting], {:ok, true}}]
+      app_file(ctx.build, :some_dep, vsn: ~c"1.0.0", compile_env: entries)
+
+      assert Manifest.compile_env(ctx.build, :some_dep) == {:ok, entries}
+    end
+
+    test "no .app is :absent, and an .app recording none is :absent too", ctx do
+      assert Manifest.compile_env(ctx.build, :some_dep) == :absent
+
+      app_file(ctx.build, :some_dep, vsn: ~c"1.0.0")
+      assert Manifest.compile_env(ctx.build, :some_dep) == :absent
+    end
+
+    # Mix answers :invalid for a bad file and :missing for none; depdep keeps them
+    # apart, as `read/1` does for the compile manifest, because the causes differ.
+    @tag verifies: "compile-env-read-from-the-app"
+    test "a file that is not the term Mix writes is :unreadable", ctx do
+      File.write!(Path.join([ctx.build, "ebin", "some_dep.app"]), "not a term at all")
+      assert Manifest.compile_env(ctx.build, :some_dep) == :unreadable
+    end
+
+    test "an entry agreeing with the application env is not a difference" do
+      Application.put_env(:a_fake_dep, :a_setting, true, persistent: true)
+
+      assert Manifest.compile_env_differences([{:a_fake_dep, [:a_setting], {:ok, true}}]) == []
+    end
+
+    @tag verifies: "explain-rebuilt-names-the-compile-env"
+    test "an entry disagreeing is named with both values" do
+      Application.put_env(:a_fake_dep, :a_setting, false, persistent: true)
+
+      assert Manifest.compile_env_differences([{:a_fake_dep, [:a_setting], {:ok, true}}]) ==
+               [{:a_fake_dep, [:a_setting], {:ok, true}, {:ok, false}}]
+    end
+
+    # The shape #141 produced on every run: recorded a value, and the asking VM has
+    # none because the member's config was never loaded.
+    test "an unset current value is a difference, reported as :error" do
+      assert Manifest.compile_env_differences([{:a_fake_dep, [:a_setting], {:ok, true}}]) ==
+               [{:a_fake_dep, [:a_setting], {:ok, true}, :error}]
+    end
+
+    # `Config.Provider` rescues an inaccessible value to `false`; this reports it as a
+    # difference instead, which is true and needs no rescue.
+    test "a value that cannot be traversed is a difference, not a crash" do
+      Application.put_env(:a_fake_dep, :a_setting, :not_accessible, persistent: true)
+
+      assert Manifest.compile_env_differences([{:a_fake_dep, [:a_setting, :deeper], {:ok, 1}}]) ==
+               [{:a_fake_dep, [:a_setting, :deeper], {:ok, 1}, :error}]
+    end
+  end
+
   describe "read/1 distinguishes absent from unreadable, without rescue" do
     setup do
       dir = Path.join(System.tmp_dir!(), "manifest-#{System.unique_integer([:positive])}")

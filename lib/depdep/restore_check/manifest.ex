@@ -31,6 +31,75 @@ defmodule Depdep.RestoreCheck.Manifest do
   """
 
   @doc """
+  The `compile_env` entries a dependency's build recorded, from its `.app`.
+
+  `{:ok, entries}`, or `:absent` when there is no `.app` or it records none, or
+  `:unreadable` when the file is not the term Mix writes. Mix conflates the last two
+  (`Mix.AppLoader.read_app/2` answers `:invalid` either way for a bad file and
+  `:missing` for none), and they have different causes — the same distinction
+  `read/1` makes for the compile manifest.
+
+  Read through `Mix.AppLoader.read_app/2` rather than by parsing the file here: it is
+  public, it is what Mix itself reads with, and it answers `:invalid` rather than
+  inventing a plausible term. That is the opposite of `Mix.Dep.ElixirSCM`, which
+  `read/1` avoids for exactly that reason.
+
+  An entry is `{app, [key | path], compile_return}`, where `compile_return` is the
+  `{:ok, value}` or `:error` the dependency saw at build time.
+  """
+  def compile_env(build, app) when is_binary(build) and is_atom(app) do
+    path = Path.join([build, "ebin", "#{app}.app"])
+
+    case Mix.AppLoader.read_app(app, path) do
+      {:ok, properties} ->
+        case List.keyfind(properties, :compile_env, 0) do
+          {:compile_env, [_ | _] = entries} -> {:ok, entries}
+          _ -> :absent
+        end
+
+      :invalid ->
+        :unreadable
+
+      :missing ->
+        :absent
+    end
+  end
+
+  @doc """
+  The entries whose recorded value disagrees with the application env **right now**.
+
+  `[{app, key_path, recorded, current}]`, empty when every entry agrees. The
+  comparison is `Config.Provider.valid_compile_env?/1`'s, one entry at a time so the
+  differing one can be named: the recorded `compile_return` against
+  `Application.fetch_env/2` traversed down the key path.
+
+  **It must be called while the member's configuration is loaded** — which is during
+  the converge, not after it (`Depdep.Deps.converged/3`'s `compile_env:` option).
+  Called later it would compare against an empty env and report every entry as
+  differing, which is the defect #161 fixed wearing a diagnostic's clothes.
+  """
+  def compile_env_differences(entries) do
+    for {app, [key | path], recorded} <- entries,
+        current = traverse(Application.fetch_env(app, key), path),
+        current != recorded do
+      {app, [key | path], recorded, current}
+    end
+  end
+
+  # `Config.Provider.traverse_env/2`, which is private. Access.fetch/2 raises on a
+  # value that is not accessible; Mix rescues that to `false`. Here a non-accessible
+  # value simply is not `recorded`, so it reports as differing — which is true, and
+  # avoids a rescue (`spec/10-decisions.md#no-rescue`).
+  defp traverse(return, []), do: return
+  defp traverse(:error, _path), do: :error
+
+  defp traverse({:ok, value}, [key | keys]) do
+    if is_map(value) or is_list(value),
+      do: traverse(Access.fetch(value, key), keys),
+      else: :error
+  end
+
+  @doc """
   The manifest's term, or why it could not be read.
 
   `{:ok, {elixir_and_otp, scm, lock}}`, `:absent` when there is no manifest — the

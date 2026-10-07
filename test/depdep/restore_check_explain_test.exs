@@ -46,11 +46,54 @@ defmodule Depdep.RestoreCheckExplainTest do
     assert line =~ "ABSENT, so Mix recompiles"
   end
 
-  test "a manifest that agrees says the rebuild is for another reason", ctx do
+  # Since #162 the agreeing case says what it looked at NEXT, because the compile env is
+  # the other cause of Mix's sentence and saying only "another reason" is what left #141
+  # to be diagnosed by reading Mix's source.
+  test "a manifest that agrees says so, and then what else it looked at", ctx do
     write(ctx.dir, {2, @vsn, Hex.SCM, @lock})
 
-    assert [line] = RestoreCheck.explain(evidence(ctx.dir, @lock))
-    assert line =~ "every field agrees"
+    lines = RestoreCheck.explain(evidence(ctx.dir, @lock))
+
+    assert Enum.join(lines, "\n") =~ "every field agrees"
+    assert List.last(lines) =~ "the rebuild is for another reason"
+  end
+
+  # #162. The comparison is captured during the converge, while the member's config is
+  # loaded, so by the time this prints it is a recorded fact rather than a fresh lookup.
+  @tag verifies: "explain-rebuilt-names-the-compile-env"
+  test "a differing compile env names the entry and both values", ctx do
+    write(ctx.dir, {2, @vsn, Hex.SCM, @lock})
+
+    evidence =
+      evidence(ctx.dir, @lock)
+      |> Map.put(:compile_env, [
+        {:phoenix_live_view, [:enable_expensive_runtime_checks], {:ok, false}, {:ok, true}}
+      ])
+
+    text = RestoreCheck.explain(evidence) |> Enum.join("\n")
+
+    assert text =~ "compile env: {:phoenix_live_view, :enable_expensive_runtime_checks}"
+    assert text =~ "was false, is true"
+    refute text =~ "another reason", "it had a reason; it must not also shrug"
+  end
+
+  test "an unset current value reads as unset rather than as :error", ctx do
+    write(ctx.dir, {2, @vsn, Hex.SCM, @lock})
+
+    evidence =
+      evidence(ctx.dir, @lock)
+      |> Map.put(:compile_env, [{:some_app, [:a_key], {:ok, 1}, :error}])
+
+    assert RestoreCheck.explain(evidence) |> Enum.join("\n") =~ "was 1, is unset"
+  end
+
+  test "an unreadable .app says so rather than naming nothing", ctx do
+    write(ctx.dir, {2, @vsn, Hex.SCM, @lock})
+
+    evidence = evidence(ctx.dir, @lock) |> Map.put(:compile_env, :unreadable)
+
+    assert RestoreCheck.explain(evidence) |> Enum.join("\n") =~
+             "the .app file is not the term Mix writes"
   end
 
   test "no evidence is no explanation rather than a crash" do
