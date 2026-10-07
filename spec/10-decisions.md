@@ -105,9 +105,15 @@ at the moment it knows it.
 ## The profile is identified by hash, not version {#profile-hash}
 
 A hash is what a machine can compare exactly, and the handshake needs exactly
-that. The version is for a person deciding whether to adopt. That the version is
-not currently bumped when the vocabulary changes is a defect, filed as #111, not a
-decision.
+that. The version is for a person deciding whether to adopt.
+
+The version was not bumped when the vocabulary changed, which was a defect rather than a
+decision; #111/#171 fixed it by **binding** the two rather than by replacing the integer
+with a hash. The integer stays because metresis presents `v{version}` to a person choosing
+whether to adopt, and a hash is not something a person can order; what a guard can supply
+is the monotonicity a hash cannot — `Depdep.Profile.content_hash`, a hash of the document
+*without* its version, held against the version in a golden
+(`spec/07-metrics-and-profile.md#profile`).
 
 ## Concurrency is derived, not tuned {#concurrency}
 

@@ -6,8 +6,14 @@ defmodule Depdep.ProfileTest do
   test "the shipped document reads, is a literal with string keys, and encodes as JSON" do
     document = Profile.read()
     assert document["key"] == "depdep"
-    assert document["version"] == 1
     assert Enum.all?(Map.keys(document), &is_binary/1)
+
+    # The version is an integer, and that is all this test says about it. It used to assert
+    # `== 1`, which is why nothing complained while the document grew by five metrics and
+    # three panels: a literal pins the value rather than the property, so it stayed green on
+    # a version that no longer described what shipped (#171, for #111). What the version has
+    # to satisfy is a RELATIONSHIP to the content, and that is asserted against the golden.
+    assert is_integer(document["version"])
 
     json = Depdep.Json.encode(document)
     assert json =~ ~s("key":"depdep")
@@ -120,6 +126,139 @@ defmodule Depdep.ProfileTest do
         end)
 
       refute Profile.hash(changed) == Profile.hash(document)
+    end
+  end
+
+  # #171, for #111. The version was 1 while the document had grown by five metrics and three
+  # panels, and `cn2` held version 2 with the OLDER vocabulary — newer by number, older by
+  # content, so metresis's one signal was inverted rather than merely absent. A bump alone
+  # is one character that drifts again; the guard is the deliverable.
+  describe "content_hash/1 — what the version is guarded against" do
+    @tag verifies: "profile-version-is-bound-to-content"
+    test "excludes the version, where hash/0 includes it" do
+      document = Profile.read()
+      bumped = Map.put(document, "version", 99)
+
+      # The whole point: the wire hash moves on a bump, so it cannot tell a bump apart from
+      # a change. The content hash does not move, so it can.
+      refute Profile.hash(bumped) == Profile.hash(document)
+      assert Profile.content_hash(bumped) == Profile.content_hash(document)
+    end
+
+    test "moves when anything else moves, including prose" do
+      document = Profile.read()
+
+      assert Profile.content_hash(Map.put(document, "guidance", "different")) !=
+               Profile.content_hash(document)
+
+      assert Profile.content_hash(document) =~ ~r/^[0-9a-f]{64}$/
+    end
+  end
+
+  # These three were cited by spec/07-metrics-and-profile.md#profile and exercised only
+  # THROUGH check/1, so no test called them and their claims could never be reviewed — the
+  # same hole #159 found across the spec, and the same one plan/3 had (#169). Called directly
+  # here, asserting what the section says each one answers.
+  describe "the two lists the section names" do
+    test "vocabulary/1 lists what the document defines" do
+      v = Profile.vocabulary()
+
+      assert MapSet.member?(v.metrics, "depdep.saved_total")
+      assert MapSet.member?(v.label_keys, "project")
+      assert MapSet.member?(v.bucket_values, "pulled")
+
+      # A document's own names, not the code's: handed a narrower document it says so.
+      narrowed =
+        Profile.read()
+        |> Map.put("metrics", [%{"key" => "depdep.elapsed"}])
+        |> Map.put("label_keys", [%{"key" => "project"}])
+
+      assert Profile.vocabulary(narrowed).metrics == MapSet.new(["depdep.elapsed"])
+    end
+
+    test "emitted/0 lists what the code posts, which is what check/1 compares against" do
+      e = Profile.emitted()
+
+      assert MapSet.member?(e.metrics, "depdep.elapsed")
+      assert MapSet.member?(e.label_keys, "project")
+    end
+  end
+
+  describe "published/1 — what the golden prints" do
+    test "reads the panels from the dashboard's layout, where they actually live" do
+      p = Profile.published()
+
+      # The first version of this looked for "panels" directly under each dashboard and
+      # found none, which would have published an empty list and had the golden record
+      # that as correct. The nesting is layout -> panels.
+      assert length(p.panels) == 9
+      assert "Units by bucket" in p.panels
+
+      assert length(p.metrics) == 14
+
+      assert {"depdep.saved_total", "s", "lower_worse"} in p.metrics or
+               Enum.any?(p.metrics, &(elem(&1, 0) == "depdep.saved_total"))
+    end
+
+    test "golden_path/0 names the committed file" do
+      assert Profile.golden_path() == "PROFILE.md"
+    end
+  end
+
+  describe "the golden, and the two ways it fails" do
+    test "the committed golden matches the shipped profile" do
+      assert Profile.golden_check() == :ok,
+             "PROFILE.md has drifted — run `mix depdep.profile golden --write`"
+    end
+
+    test "the version is past the 2 the instance held, so a publish reads as an update" do
+      assert Map.fetch!(Profile.read(), "version") > 2
+    end
+
+    # Changing the document without bumping is the defect this exists to stop, and the
+    # message has to name WHAT changed — a check that says only "stale" makes a reader diff
+    # the file by hand.
+    test "a changed vocabulary with a standing version fails, naming the change" do
+      changed =
+        Map.update!(Profile.read(), "metrics", fn metrics ->
+          [%{"key" => "depdep.invented", "unit" => "s", "polarity" => "neutral"} | metrics]
+        end)
+
+      assert {:drift, lines} = Profile.golden_check(changed)
+      assert Enum.any?(lines, &(&1 =~ "is still"))
+      assert Enum.any?(lines, &(&1 =~ "metric added: depdep.invented"))
+    end
+
+    test "a removed panel is named too, not only an added one" do
+      changed =
+        Map.update!(Profile.read(), "dashboards", fn [dashboard | rest] ->
+          [update_in(dashboard, ["layout", "panels"], &tl(&1)) | rest]
+        end)
+
+      assert {:drift, lines} = Profile.golden_check(changed)
+      assert Enum.any?(lines, &(&1 =~ "panel gone:"))
+    end
+
+    # A bump means something, so a bump that announces nothing is also a failure.
+    test "a bumped version with the document unchanged fails" do
+      bumped = Map.update!(Profile.read(), "version", &(&1 + 1))
+
+      assert {:drift, lines} = Profile.golden_check(bumped)
+      assert Enum.any?(lines, &(&1 =~ "announces nothing"))
+    end
+
+    # Prose is a real update — metresis shows `guidance` to a person deciding whether to
+    # adopt — so it is guarded like anything else, with no vocabulary line to report.
+    test "a prose-only change still needs a bump" do
+      changed = Map.put(Profile.read(), "guidance", "rewritten")
+
+      assert {:drift, lines} = Profile.golden_check(changed)
+      assert Enum.any?(lines, &(&1 =~ "is still"))
+    end
+
+    test "golden/1 is a pure function of the document" do
+      document = Profile.read()
+      assert Profile.golden(document) == Profile.golden(document)
     end
   end
 

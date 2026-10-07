@@ -69,10 +69,30 @@ the code emits, **in both directions**: a metric posted but undefined would
 register bare on the instance, and a metric defined but never posted is a claim
 the code does not make.
 
-> The document's `version` field is **not** currently bumped when the vocabulary
-> changes, and an instance takes that version verbatim. Filed as #111. This
-> section states the hash as the identity because that is what the handshake
-> uses; the version's rules belong to #111 rather than being invented here.
+**The version is bound to the content, and the binding is checked** (#111/#171). An
+instance takes the version verbatim and metresis's loader states the contract — a version
+bump is how an update announces itself — so a version that lags the document announces
+nothing. `Depdep.Profile.content_hash` is the SHA-256 over the document **without**
+`"version"`, and `Depdep.Profile.golden` writes it beside the version into `PROFILE.md`.
+`Depdep.Profile.golden_check` fails in both directions:
+
+- the content hash moved and the version did not — a change nothing announces;
+- the version moved and the content hash did not — a bump that announces nothing.
+
+`hash` is unchanged and still the identity, because the instance compares the whole
+document, `"version"` included. That is exactly why the guard needs a second hash rather
+than reusing it: a bump moves `hash`, so `hash` cannot tell a bump from a change.
+
+The guard covers the **whole document**, so a `guidance` rewrite needs a bump too. metresis
+shows guidance to a person deciding whether to adopt, so it is a real update; the cost is
+that a typo fix is announced as a new version, which is the right side to err on for a field
+whose only job is to be monotonic and legible.
+
+```test profile-version-is-bound-to-content
+given a document whose content moved while its version stood still
+then the check fails and names what changed
+and a version that moved with the content unchanged fails too
+```
 
 ```test profile-holds-the-code
 given a metric the code emits and the profile does not define
