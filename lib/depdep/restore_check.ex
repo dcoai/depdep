@@ -64,11 +64,30 @@ defmodule Depdep.RestoreCheck do
     {:rebuild, Mix.Dep.format_status(dep), evidence(dep)}
   end
 
-  defp evidence(%Mix.Dep{scm: scm, opts: opts}) do
+  defp evidence(%Mix.Dep{scm: scm, opts: opts, app: app}) do
     %{
       build: opts[:build],
-      expected: {{System.version(), :erlang.system_info(:otp_release)}, scm, opts[:lock]}
+      expected: {{System.version(), :erlang.system_info(:otp_release)}, scm, opts[:lock]},
+      compile_env: compile_env_evidence(opts[:build], app)
     }
+  end
+
+  # **Captured here, not in `explain/1`** (#162). Mix decides `compile_env` against the
+  # application env in the asking VM, and `Depdep.Deps.converged/3` has the member's
+  # config loaded only for the duration of the converge — which is where this runs.
+  # Comparing later would compare against an empty env and name every entry as
+  # differing, which is #161's defect wearing a diagnostic's clothes.
+  #
+  # Cheap when there is nothing to say: one `.app` read per dependency Mix rejected,
+  # and `explain/1` is off by default but this is not, because by the time the flag is
+  # read the window has closed.
+  defp compile_env_evidence(nil, _app), do: :absent
+
+  defp compile_env_evidence(build, app) do
+    case Manifest.compile_env(build, app) do
+      {:ok, entries} -> Manifest.compile_env_differences(entries)
+      other -> other
+    end
   end
 
   @doc """
@@ -109,7 +128,7 @@ defmodule Depdep.RestoreCheck do
   what Mix expected — a rebuild for a reason outside the manifest, which is worth
   seeing as the absence of an explanation rather than a wrong one.
   """
-  def explain(%{build: build, expected: expected}) do
+  def explain(%{build: build, expected: expected} = evidence) do
     path = Manifest.path(build)
 
     case Manifest.read(build) do
@@ -124,11 +143,31 @@ defmodule Depdep.RestoreCheck do
 
         if Manifest.differs?(verdicts),
           do: ["manifest: #{path}"] ++ Enum.flat_map(verdicts, &field_line/1),
-          else: ["manifest: #{path} — every field agrees; the rebuild is for another reason"]
+          else: ["manifest: #{path} — every field agrees"] ++ compile_env_lines(evidence)
     end
   end
 
   def explain(_no_evidence), do: []
+
+  # The compile env is the OTHER cause of "the dependency compile environment is
+  # outdated", and until #162 the diagnostic could only say the manifest agreed and
+  # stop — which is why #141 had to be found by reading Mix's source instead.
+  defp compile_env_lines(%{compile_env: [_ | _] = differences}) do
+    for {app, keys, recorded, current} <- differences do
+      "  compile env: #{entry(app, keys)} was #{value(recorded)}, is #{value(current)}"
+    end
+  end
+
+  defp compile_env_lines(%{compile_env: :unreadable}),
+    do: ["  compile env: the .app file is not the term Mix writes"]
+
+  defp compile_env_lines(_none), do: ["  the rebuild is for another reason"]
+
+  defp entry(app, [key]), do: "{#{inspect(app)}, #{inspect(key)}}"
+  defp entry(app, keys), do: "{#{inspect(app)}, #{inspect(keys)}}"
+
+  defp value({:ok, v}), do: inspect(v, limit: 8)
+  defp value(:error), do: "unset"
 
   defp field_line({field, :same}), do: ["  #{pad(field)} same"]
 

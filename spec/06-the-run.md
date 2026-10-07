@@ -128,10 +128,34 @@ that is **absent** from one that is **unreadable** — Mix conflates them, and t
 have different causes. `Depdep.RestoreCheck.Manifest.path/1` is where Mix keeps
 it, printed so a reader can fetch it themselves, and
 `Depdep.RestoreCheck.Manifest.differs?/1` is what decides whether there is
-anything to print at all. `Depdep.RestoreCheck.Manifest` holds all three, and
+anything to print at all. `Depdep.RestoreCheck.Manifest` holds them, and
 reads the file directly rather than through `Mix.Dep.ElixirSCM`, which is
 private and whose own reader invents a plausible-looking answer for a term it
 cannot match.
+
+**The compile environment is the other cause of that sentence, and it is named
+too.** `Depdep.RestoreCheck.Manifest.compile_env/2` reads what a build recorded
+from its `.app`, through `Mix.AppLoader.read_app/2` — public, what Mix reads with,
+and answering `:invalid` rather than inventing a term — and
+`Depdep.RestoreCheck.Manifest.compile_env_differences/1` names the entries whose
+recorded value disagrees with the application env, with both values.
+
+That comparison is taken **during the converge**, while the member's configuration
+is loaded, and carried in the evidence. Taken afterwards it would compare against
+an empty env and name every entry, which is the defect above wearing a
+diagnostic's clothes.
+
+```test compile-env-read-from-the-app
+given a build whose .app records compile env entries
+then they are read from it, and a file that is not the term Mix writes is
+distinguished from no file at all
+```
+
+```test explain-rebuilt-names-the-compile-env
+given a restored unit whose recorded compile env disagrees with the consumer's config
+when the run is made with --explain-rebuilt
+then the entry is named with both values, and nothing says the reason is unknown
+```
 
 It is off by default. Reporting six lines per rejected unit unprompted would,
 on a warm run with hundreds of them, bury the warning it exists to explain.
