@@ -219,13 +219,30 @@ defmodule Depdep.CLI.Operator do
     end)
   end
 
-  # Object paths are readable by design — `v2/...`, `apt/v1/...`, `git/v1/...` —
-  # so the leading segments are the natural grouping.
+  # Object paths are readable by design — `v3/...`, `apt/v1/...`, `git/v1/...`,
+  # `src/v1/...` — so the leading segments are the natural grouping.
+  #
+  # **The grouping asks the sweep's own classification** (`Sweep.rule_for/1`), so the
+  # report an operator reads before deleting and the delete itself cannot disagree about
+  # what a key is (#169, for #125). This used to match the literal `"v2"`, and when the
+  # schema went to `v3` the mix clause stopped matching: the `provider/version` clause
+  # took over and produced `v3/<package>`, so the production report printed **128 rows
+  # where there should be one** — the number an operator needs buried under the packages
+  # it is made of.
+  #
+  # A mix key groups as its bare first segment, which is the schema. That is what makes
+  # `retired?/1` above meaningful, and it is now true by the rule rather than by the
+  # literal that used to be here.
+  #
+  # `src/v1` is NOT a schema, so it keeps `provider/version` — which is why `rule_for/1`
+  # names `:source` rather than letting it fall through to `:mix`. The sweep decides the
+  # two identically (reachability, #165); the report does not, because `src` alone would
+  # tell an operator less than `src/v1` does.
   defp group(key) do
-    case String.split(key, "/") do
-      ["v2" | _] -> "v2"
-      [provider, version | _] -> "#{provider}/#{version}"
-      [other | _] -> other
+    case {Sweep.rule_for(key), String.split(key, "/")} do
+      {rule, [schema | _]} when rule in [:mix, :retired] -> schema
+      {_rule, [provider, version | _]} -> "#{provider}/#{version}"
+      {_rule, [other | _]} -> other
     end
   end
 

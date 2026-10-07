@@ -15,8 +15,14 @@ defmodule Depdep.Sweep do
 
   ## One rule per prefix, because the providers are not alike
 
-    * **`v2/` (mix)** — mark and sweep. Churn-driven growth, and the live set is
-      exactly known from the roots consumers write.
+    * **the schema prefix (mix), and `src/v1/`** — mark and sweep. Churn-driven
+      growth, and the live set is exactly known from the roots consumers write.
+      Named by `rule_for/1` as the *fall-through* rather than by any particular
+      schema spelling, which is why the `v2` → `v3` bump did not break
+      reclamation. A source checkout is decided the same way, deliberately: it
+      is named by the roots exactly as a build is (#165).
+    * **a retired schema** — removed without consulting the live set at all.
+      Nothing depdep runs can request one (`Depdep.Key.retired/0`, #166).
     * **`git/v1/`** — epoch retention. A mirror is a seed whose staleness is
       harmless by construction, so an older epoch is *superseded* rather than
       unreachable. Age is the truer rule, and marking would keep every epoch any
@@ -91,31 +97,59 @@ defmodule Depdep.Sweep do
     Enum.count(objects, &newer_than?(&1, grace_days, now))
   end
 
-  defp verdict(object, live, window_days, keep_epochs, now, epochs) do
+  @doc """
+  Which rule a key falls under: `:retired`, `:apt`, `:roots`, `:git`, `:source` or `:mix`.
+
+  **`:mix` is the fall-through**, and that is the whole point of exposing this. The mix
+  prefix is "not one of the named providers" rather than any particular spelling, so a
+  schema bump cannot move an object out of it — which is why a schema bump did not break
+  reclamation when `v2` became `v3`, and why it cannot break the report either (#169, for
+  #125). `Depdep.CLI.Operator` groups by this, so the report an operator reads before
+  deleting and the delete itself classify every key with one function rather than two that
+  agree by coincidence.
+  """
+  def rule_for(key) do
     cond do
       # **A retired schema's objects are unreachable by construction** (#166, for #140).
       # `Depdep.Key.object/3` builds every path from the CURRENT schema, so nothing
       # depdep runs will ever ask for one of these — the live set cannot change the
       # answer, and a root that still names one was written by a version nobody runs.
       #
-      # Checked first, before the live-set fallback below would spare it. The grace
-      # window still applies: `plan/3` has already rejected anything newer, because the
-      # race a push can lose to a listing does not care which schema it is.
-      retired?(object.key) ->
+      # Checked first, before the `:mix` fall-through would hand it to the live set.
+      retired?(key) -> :retired
+      String.starts_with?(key, "apt/") -> :apt
+      String.starts_with?(key, "roots/") -> :roots
+      String.starts_with?(key, "git/") -> :git
+      String.starts_with?(key, Depdep.Provider.Mix.Source.prefix() <> "/") -> :source
+      true -> :mix
+    end
+  end
+
+  defp verdict(object, live, window_days, keep_epochs, now, epochs) do
+    case rule_for(object.key) do
+      # The grace window still applies to a retired object: `plan/3` has already rejected
+      # anything newer, because the race a push can lose to a listing does not care which
+      # schema it is.
+      :retired ->
         [{object, "schema #{schema_of(object.key)} is retired"}]
 
-      String.starts_with?(object.key, "apt/") ->
+      :apt ->
         []
 
-      String.starts_with?(object.key, "roots/") ->
+      :roots ->
         if newer_than?(object, window_days, now),
           do: [],
           else: [{object, "a root nobody has refreshed in #{window_days} days"}]
 
-      String.starts_with?(object.key, "git/") ->
+      :git ->
         git_verdict(object, keep_epochs, epochs)
 
-      true ->
+      # **Source and mix are decided identically, and that is a decision rather than an
+      # absence of one** (#165). A source object is named by the roots a consumer writes
+      # exactly as a build is, so reachability is the truer rule — unlike a git mirror,
+      # whose staleness is harmless and so is kept by epoch. Named separately from `:mix`
+      # because the report groups by this and `src/v1` is not a schema (#169).
+      rule when rule in [:mix, :source] ->
         if MapSet.member?(live, object.key),
           do: [],
           else: [{object, "no current root references it"}]

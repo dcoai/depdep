@@ -46,8 +46,10 @@ configure a package differently need different objects.
 
 **Upgrading past v0.5 refills the store once.** The v3 key changes every
 object path, so each consumer's first pipeline on this version is a cold pull
-that pushes everything again, and the second is warm. v2 objects are left for
-`--sweep` to reclaim.
+that pushes everything again, and the second is warm. The `v2` objects left
+behind are reclaimed by `--sweep`, which removes a retired schema's objects
+without consulting the live set at all — stale roots still name them, so
+marking would have spared them indefinitely.
 
 ## Why no dependencies
 

@@ -86,10 +86,50 @@ defmodule Depdep.OperatorReportTest do
     :ok = Depdep.S3.put(store_cfg(ctx), live, write_tmp("some bytes"))
 
     line =
-      body() |> String.split("\n") |> Enum.find(&String.contains?(&1, Depdep.Key.schema() <> "/"))
+      body()
+      |> String.split("\n")
+      |> Enum.find(&String.contains?(&1, Depdep.Key.schema() <> "\t"))
 
     assert line =~ "reachable"
     refute line =~ "RETIRED"
+  end
+
+  # **The recurrence guard** (#169, for #125). A listing holding every prefix at the
+  # CURRENT schema, asserting one row per prefix and not one per package. The defect was
+  # that `group/1` knew the literal `"v2"`: when the schema moved to `v3` the mix clause
+  # stopped matching, the `provider/version` clause took over, and the production report
+  # printed 128 rows where one belonged.
+  #
+  # Now the grouping asks `Sweep.rule_for/1`, whose `:mix` is the fall-through, so there is
+  # no schema literal left to go stale — this test holds that property rather than the
+  # spelling of any one schema.
+  @tag verifies: "one-classification-for-report-and-sweep"
+  test "every prefix is one group, whatever the schema is called", ctx do
+    cfg = store_cfg(ctx)
+    schema = Depdep.Key.schema()
+
+    for key <- [
+          "#{schema}/jason/1.4.4/aaa.tar.gz",
+          "#{schema}/ash/3.0.0/bbb.tar.gz",
+          "#{schema}/telemetry/1.2.0/ccc.tar.gz",
+          "apt/v1/debian-bookworm/libbsd0_0.11.7-2_amd64.deb",
+          "git/v1/some-repo/1700000000/mirror.tar.gz",
+          "src/v1/some-repo/abc123/source.tar.gz"
+        ] do
+      :ok = Depdep.S3.put(cfg, key, write_tmp("bytes for #{key}"))
+    end
+
+    groups =
+      body()
+      |> String.split("\n")
+      |> Enum.filter(&String.contains?(&1, "objects,"))
+      |> Enum.map(&(&1 |> String.split("\t") |> hd() |> String.replace("depdep: ", "")))
+
+    assert Enum.sort(groups) == Enum.sort([schema, "apt/v1", "git/v1", "src/v1"])
+
+    # The defect itself: three packages under one schema must not be three rows.
+    refute Enum.any?(groups, &String.starts_with?(&1, schema <> "/")),
+           "the schema is grouped per package again — #{inspect(groups)}"
   end
 
   defp store_cfg(_ctx) do

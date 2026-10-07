@@ -58,7 +58,8 @@ Each provider is reclaimed by the rule that actually fits it:
 
 | prefix | rule | why |
 |---|---|---|
-| `v2/` (mix) | what no current root names | churn-driven, and the live set is exactly known |
+| the schema prefix (mix), `src/v1/` | what no current root names | churn-driven, and the live set is exactly known |
+| a retired schema | everything, without consulting the live set | nothing depdep runs can request it, so a root naming one was written by a version nobody runs |
 | `git/v1/` | newest `--keep-epochs` per repository (default 2) | a mirror is a seed; an older one is superseded, not unreachable |
 | `apt/v1/` | never | small, near-static, shared by every consumer, and its live set needs apt in the right container |
 | `roots/` | older than `--within` (default 30 days) | they only accumulate when a branch dies |

@@ -240,7 +240,7 @@ by replaying it: the same eleven projects computed **564 byte-identical keys**,
 and every object already in the store was one the extracted code asked for. That
 showed the extraction changed no key — a refactor check, and a good one. It is
 not evidence about the rules in force today, which are schema `v3`; the keys it
-compared were `v2`.
+compared were `v2`, a schema since retired.
 
 Every figure above is dated and re-takeable. The savings and rebuild counts come
 from the metrics store (one query per metric, grouped by project); the store's
@@ -282,15 +282,24 @@ is now exercised where it can be seen, not asserted.
 
   Three things worth reading off it. **The live set is real**: 922 roots, every
   one refreshed inside the window, so reclamation would have a live set to work
-  from rather than refusing. **`v2` is still live** — consumers pinned to v0.6.0
-  still push and pull it — and it holds 1229.4 MiB of which 451.9 MiB is
-  unreachable, the largest reclaimable thing in the store. **`apt/v1` has 33
-  unreachable objects and that is by design**: apt is never swept
-  (`spec/08-reclamation.md#prefixes`).
+  from rather than refusing. **`v2` held 1229.4 MiB**, the largest reclaimable
+  thing in the store. **`apt/v1` has 33 unreachable objects and that is by
+  design**: apt is never swept (`spec/08-reclamation.md#prefixes`).
 
-  The 128 `v3/` rows are one per package where there should be one row in total,
-  which is #125 — a reporting defect, visible here in production for the first
-  time.
+  Two readings of it have since changed, and the figures are left exactly as
+  measured rather than restated:
+
+  - **`v2` was live then and is retired now.** On that date consumers pinned to
+    v0.6.0 still pushed and pulled it. By 2026-10-07 every consumer was on
+    v0.7.0 or later, so `Depdep.Key.retired/0` names `v2` and `--sweep` removes
+    its objects without consulting the live set (#140/#166). The `382 reachable`
+    above is the reason that rule exists: those objects were named by roots
+    written before the pins moved, and **none of them was requestable**, because
+    every path depdep builds begins with the current schema.
+  - **The 128 `v3/` rows were a defect, fixed in #125/#169.** One row per package
+    where one row belonged. `--report` now groups by the sweep's own
+    classification, whose mix case is the fall-through, so a schema bump cannot
+    split it again.
 
 **Not on hex.pm yet.** The package builds (`mix hex.build`) and every tag
 rehearses a publish, but no version has been published; until one is, install

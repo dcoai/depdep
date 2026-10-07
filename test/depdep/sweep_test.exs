@@ -84,6 +84,7 @@ defmodule Depdep.SweepTest do
   # are swept regardless of the live set, so "a live mix object" has to be spelled with
   # whatever `Depdep.Key.schema/0` returns today.
   describe "mix objects" do
+    @tag verifies: "spec/08-reclamation.md#Reclamation"
     test "an object a current root names survives" do
       objects = [object("v3/jason/1.4.4/aaa.tar.gz", 10)]
       assert doomed(objects, ["v3/jason/1.4.4/aaa.tar.gz"]) == []
@@ -101,10 +102,45 @@ defmodule Depdep.SweepTest do
       assert doomed(objects, []) == []
     end
 
+    @tag verifies: "spec/08-reclamation.md#rails"
     test "the grace period is configurable and applied against the given clock" do
       objects = [object("v3/a/1/x.tar.gz", 5)]
       assert doomed(objects, [], grace_days: 7) == []
       assert doomed(objects, [], grace_days: 2) == ["v3/a/1/x.tar.gz"]
+    end
+  end
+
+  # #169, for #125. The classification both --report and --sweep ask, so the command an
+  # operator reads before deleting and the delete itself cannot disagree about what a key
+  # is. `Operator.group/1` used to decide this separately, with a literal `"v2"`, and the
+  # v3 bump desynchronised them: the report printed 128 groups where one belonged.
+  describe "rule_for/1 — the one classification" do
+    @tag verifies: "spec/08-reclamation.md#prefixes"
+    test "each named prefix has its rule, and mix is the fall-through" do
+      assert Sweep.rule_for("apt/v1/debian-bookworm/libbsd0.deb") == :apt
+      assert Sweep.rule_for("roots/consumer/main/mix.json") == :roots
+      assert Sweep.rule_for("git/v1/some-repo/1700000000/mirror.tar.gz") == :git
+      assert Sweep.rule_for("src/v1/some-repo/abc123/source.tar.gz") == :source
+      assert Sweep.rule_for("#{Depdep.Key.schema()}/jason/1.4.4/aaa.tar.gz") == :mix
+      assert Sweep.rule_for("#{hd(Depdep.Key.retired())}/jason/1.4.4/aaa.tar.gz") == :retired
+    end
+
+    # **The property that matters.** `:mix` is "not one of the named prefixes", so a schema
+    # nobody has invented yet is already classified correctly — which is why the v2 -> v3
+    # bump did not break reclamation, and why the next bump cannot break the report.
+    test "a schema that does not exist yet is mix, without being taught about it" do
+      assert Sweep.rule_for("v9/jason/1.4.4/aaa.tar.gz") == :mix
+      assert Sweep.rule_for("v4000/ash/3.0.0/bbb.tar.gz") == :mix
+    end
+
+    # src/ is decided exactly as mix by the sweep (#165) and is still named separately,
+    # because `src/v1` is not a schema and the report says more by keeping it.
+    test "source is named although the sweep decides it exactly as mix" do
+      source = object("src/v1/repo/abc/source.tar.gz", 10)
+      mix = object("#{Depdep.Key.schema()}/jason/1.4.4/aaa.tar.gz", 10)
+
+      assert doomed([source, mix], []) |> Enum.sort() == Enum.sort([source.key, mix.key])
+      assert doomed([source, mix], [source.key, mix.key]) == []
     end
   end
 
@@ -249,6 +285,7 @@ defmodule Depdep.SweepTest do
   end
 
   describe "protected/2" do
+    @tag verifies: "spec/08-reclamation.md#prefixes"
     test "counts what the grace period is holding" do
       objects = [object("v3/a/1/x.tar.gz", 1), object("v3/a/1/y.tar.gz", 30)]
       assert Sweep.protected(objects, now: @now, grace_days: 2) == 1
