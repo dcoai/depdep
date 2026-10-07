@@ -315,6 +315,36 @@ and a lockfile naming the same commit under a different spelling of the URL
 then Mix rejects the checkout before the restore and accepts it after
 ```
 
+## A git dependency's source is keyed on its commit alone {#source-key}
+
+The key above is for **compiled output**, which depends on the output of everything
+below it. A git dependency's **source** depends on nothing: its lock entry is
+`{:git, url, rev, opts}` with `rev` an exact commit, so the bytes are determined by
+that commit — no children, no toolchain, no configuration. There is nothing for the
+recursion to protect against, and adding the toolchain here would split the store for
+no difference in content.
+
+`Depdep.Provider.Mix.Source.commit/1` is the identity and
+`Depdep.Provider.Mix.Source.object/1` places it. **The commit is the content address**,
+so the path carries it rather than a digest of it — the same choice
+`spec/05-units-and-providers.md#git` makes for the mirror's epoch: when the identity is
+already short and readable, hashing it only makes the store harder to browse.
+
+**The repository is normalised, so two spellings share one object.**
+`Depdep.Provider.Git.slug/1` reduces `git@host:group/proj.git` and
+`https://host/group/proj.git` to one name. Keying on the URL as written would store a
+commit once per way of writing its address — #123's defect paid for in storage instead
+of in recompiles.
+
+A non-git entry answers `:not_git` rather than being given a path. A hex dependency's
+source is a tarball Mix fetches by checksum and is not this provider's business.
+
+```test source-key-shares-one-object-per-commit
+given two git lock entries for one commit, spelled git@ and https
+then they name one source object
+and a different commit names a different one, while a tag or ref pin changes nothing
+```
+
 ## Where an object lives {#object-path}
 
 `Depdep.Key.object/3` gives an object's path:
