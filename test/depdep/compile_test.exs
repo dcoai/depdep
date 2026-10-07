@@ -32,6 +32,21 @@ defmodule Depdep.CompileTest do
       assert [%Unit{name: "jason"}] = Compile.select(units, &(&1.name != "spark"))
     end
 
+    # #164: run/2 turns each unit's :name into an argv for `mix deps.compile`, and
+    # "forked (source)" is not something Mix can compile — it would fail, and
+    # --compile-deps makes Mix's status the run's, so it would fail the consumer's
+    # pipeline. A missed source is fetched by deps.get, which was going to happen anyway.
+    @tag verifies: "spec/05-units-and-providers.md#source"
+    test "a source unit is never selected, whatever the misses say" do
+      source = %{unit("forked (source)") | context: %{project_dir: "/app", kind: :source}}
+      units = [unit("jason"), source]
+
+      assert Compile.select(units, ["app/jason", "app/forked (source)"]) |> Enum.map(& &1.name) ==
+               ["jason"]
+
+      assert Compile.select(units, fn _ -> true end) |> Enum.map(& &1.name) == ["jason"]
+    end
+
     test "nothing missing, nothing compiled" do
       assert Compile.select([unit("jason")], []) == []
     end

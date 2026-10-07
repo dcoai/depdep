@@ -61,6 +61,49 @@ sharp.
 satisfied on disk. `Depdep.Provider.Mix.Get.run/3` is `--mix-get`, specified in
 `spec/06-the-run.md`.
 
+## A git dependency's source, restored before `deps.get` {#source}
+
+A git dependency's **build** is skipped in the first pass, because its children are
+unknown until `mix deps.get` has fetched it. Its **source** is not: the lock names an
+exact commit, so `spec/03-keys.md#source-key` keys it without recursion and it can be
+restored before `deps.get` runs. Mix then finds the checkout at the locked rev and does
+not clone it.
+
+Measured on `dco-tek/snow-removal-tracker-ex`: about **35 s of a 52 s fully warm run**
+with nothing compiled, three clones, heroicons the largest at 21723 objects — repeated
+per job, per pipeline, per consumer. After compiled dependencies this was the largest
+thing depdep did not hold.
+
+**A source unit is additional, not a replacement.** The build unit's skip is unchanged,
+and its object path does not move — the promise `#mix` makes to every consumer's store
+is untouched.
+
+**Its name carries `(source)`.** `Depdep.Unit.label/1` keys the restore check, the
+second pass and the compile selection, and two units of one dependency sharing a label
+would overwrite each other in all three. Build-unit labels are unchanged, which also
+keeps the metrics an instance already holds continuous.
+
+**It is present when the checkout is at the locked commit**, asked of git rather than
+recorded in a note: the commit is the identity, so git already holds the answer and a
+note could disagree with the checkout beside it. A checkout at any other commit, or none,
+is a **miss** — `deps.get` then fetches, and the summary says so. Accepting it would leave
+Mix to clone anyway, which is the cost this exists to remove, with nothing saying the
+restore was useless.
+
+**A source unit is never compiled.** `Depdep.Compile.select/2` rejects it, because
+`Depdep.Compile.run/2` turns a unit's name into an argument for `mix deps.compile` and a
+source is not a thing Mix can be asked to compile — with `--compile-deps` making Mix's
+exit status the run's, that would fail the consumer's pipeline.
+
+Restoring adopts this consumer's lock URL as `origin`, exactly as a restored build does
+(`spec/03-keys.md#not-hashed`).
+
+```test source-unit-is-a-miss-unless-at-the-locked-commit
+given a restored checkout at another commit, or none
+then the source unit is not present, so the run treats it as a miss
+and a restore that lands at the locked commit adopts this consumer's origin
+```
+
 ## Debian packages {#apt}
 
 `Depdep.Provider.Apt`, so a job does not re-download packages from a mirror.

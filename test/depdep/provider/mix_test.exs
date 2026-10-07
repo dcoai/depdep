@@ -130,9 +130,31 @@ defmodule Depdep.Provider.MixTest do
       end
     end
 
+    # The gate stays strict and gets stricter: a BUILD unit for every lock entry and no
+    # others, asserted apart from the source units #164 added. Loosening this to a
+    # superset check would have let an unintended extra build unit through, which is the
+    # change this test exists to catch — one build unit per entry is what the object
+    # paths are a promise about.
     @tag verifies: "spec/05-units-and-providers.md#mix"
-    test "a unit is emitted for every entry in the lock, and no others", ctx do
-      assert Enum.sort(Map.keys(ctx.by_name)) == ["decimal", "forked", "jason"]
+    test "a build unit is emitted for every entry in the lock, and no others", ctx do
+      build_units =
+        ctx.by_name
+        |> Map.keys()
+        |> Enum.reject(&String.ends_with?(&1, " (source)"))
+        |> Enum.sort()
+
+      assert build_units == ["decimal", "forked", "jason"]
+    end
+
+    # One source unit, for the one git entry — a hex entry has no source object (#163).
+    test "a source unit is emitted for each git entry, and only those", ctx do
+      sources =
+        ctx.by_name
+        |> Map.keys()
+        |> Enum.filter(&String.ends_with?(&1, " (source)"))
+        |> Enum.sort()
+
+      assert sources == ["forked (source)"]
     end
   end
 
@@ -495,6 +517,7 @@ defmodule Depdep.Provider.MixTest do
 
     # The first run after this shipped: no notes exist anywhere yet, so every
     # dependency is fetched once. Safe direction, and cheap — they are all hits.
+    @tag verifies: "spec/05-units-and-providers.md#mix"
     test "is not treated as present when nothing was recorded", ctx do
       refute Provider.Mix.present?(ctx.unit)
     end

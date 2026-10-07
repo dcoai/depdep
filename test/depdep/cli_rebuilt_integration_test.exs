@@ -103,8 +103,9 @@ defmodule Depdep.CLIRebuiltIntegrationTest do
 
     File.write!(manifest, :erlang.term_to_binary({vsn, toolchain, scm, stale}))
 
+    # Two: the build and the git dependency's source, which #164 stores as well.
     assert {out_push, 0} = depdep(a, ctx.port, ["--push"])
-    assert out_push =~ "uploaded 1"
+    assert out_push =~ "uploaded 2"
 
     # B: the same project, cold. The pull is a hit; Mix would rebuild it.
     b = checkout(ctx.base, "b", ctx.upstream)
@@ -115,7 +116,13 @@ defmodule Depdep.CLIRebuiltIntegrationTest do
     assert out_b =~ "counted as a miss"
     assert out_b =~ "Generated forked app"
     assert out_b =~ ~r/missing 1.*— rebuilt 1/
-    refute out_b =~ "pulled 1"
+
+    # The re-bucketing is the claim: the BUILD unit moved from pulled to missing. The
+    # `pulled 1` that remains is the git dependency's source, which #164 restores in the
+    # first pass and which Mix has no complaint about — so counting it is correct, and
+    # asserting "pulled 0" would be asserting the source was not restored.
+    assert out_b =~ ~r/pulled 1, missing 1/
+    refute out_b =~ "pulled 2"
   end
 
   # #135. The fixture above manufactures a manifest whose lock entry differs in a
@@ -169,8 +176,9 @@ defmodule Depdep.CLIRebuiltIntegrationTest do
     b = checkout(ctx.base, "b", ctx.upstream)
     File.cp!(Path.join(a, "mix.lock"), Path.join(b, "mix.lock"))
 
+    # Two again: the source in the first pass, the build in the second (#164).
     assert {out_b, 0} = depdep(b, ctx.port, ["--pull", "--mix-get", "--compile-deps"])
-    assert out_b =~ "pulled 1"
+    assert out_b =~ "pulled 2"
     refute out_b =~ "rebuilt"
     refute out_b =~ "Generated forked app"
   end
