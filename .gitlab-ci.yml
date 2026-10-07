@@ -281,11 +281,20 @@ reclamation:
     - mix run ci/fill_store.exs
 
     # --report: the first honest look at a store's contents (#10's inventory).
-    # It groups by package, so ten lines of 105 is the shape asserted.
+    #
+    # **These assertions used to encode the defect they were written beside** (#125/#169).
+    # The job was added after `group/1`'s `"v2"` literal had already stopped matching under
+    # `v3`, so "ten lines of 105" was the buggy output taken as the baseline — and the job
+    # went green on it for as long as the defect lasted. The report groups by
+    # `Depdep.Sweep.rule_for/1` now, so there is one mix row.
+    #
+    # One row of 1050 is also the stronger assertion: it names the whole prefix's size and
+    # its reachable count, which is the number an operator actually reads.
     - mix run -e 'Depdep.CLI.main(["--report"])' 2>&1 | tee /tmp/report.log
     - grep -qE '1 roots, 1 written in the last' /tmp/report.log
-    - test "$(grep -c '^depdep:.v3/pkg' /tmp/report.log)" = 10
-    - grep -qE '105 objects.*1 reachable, 104 not' /tmp/report.log
+    - test "$(grep -c '^depdep:.v3/pkg' /tmp/report.log)" = 0
+    - test "$(grep -cE '^depdep:.v3\s' /tmp/report.log)" = 1
+    - grep -qE '1050 objects.*10 reachable, 1040 not' /tmp/report.log
 
     # --sweep without --confirm removes nothing.
     #
@@ -305,7 +314,7 @@ reclamation:
     # exiting reader makes the writer die of SIGPIPE and the job fails at
     # random (the lesson bizex's CI already carries).
     - mix run -e 'Depdep.CLI.main(["--report"])' 2>&1 | tee /tmp/report2.log
-    - grep -qE '105 objects' /tmp/report2.log
+    - grep -qE '1050 objects' /tmp/report2.log
 
     # And with it, exactly what no root names.
     # --bucket is the fourth rail (#150): --confirm names the store it will change,
@@ -315,7 +324,9 @@ reclamation:
     - mix run -e 'Depdep.CLI.main(["--sweep", "--grace", "-1", "--confirm", "--bucket", "depdep-ci"])' 2>&1 | tee /tmp/sweep.log
     - grep -qE 'removed 1040 of 1040' /tmp/sweep.log
     - mix run -e 'Depdep.CLI.main(["--report"])' 2>&1 | tee /tmp/after.log
-    - test "$(grep -c '1 objects, 0.0 MiB — 1 reachable, 0 not' /tmp/after.log)" = 10
+    # Ten objects survive — one per package, the one each root names — and they are now
+    # one row rather than ten (#169).
+    - grep -qE '^depdep:.v3\s+10 objects.*10 reachable, 0 not' /tmp/after.log
 
 # Everything a hex publish would do, done locally, on every tag — package,
 # docs through the ex_doc escript (deps/0 stays empty), hex's own checks — so

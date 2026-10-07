@@ -130,6 +130,20 @@ indefinitely. Measured before the rule: 382 of the production store's 570 `v2` o
 were "reachable" that way, none of them requestable. The grace window still applies to a
 retired object, because a push racing a listing does not care which schema it is.
 
+**The report and the sweep classify a key with one function**, `Depdep.Sweep.rule_for/1`,
+whose mix case is the **fall-through** — "not one of the named prefixes" rather than any
+particular schema spelling. That is why the `v2` → `v3` bump did not break reclamation, and
+it is what keeps `--report` and `--sweep` from disagreeing about what a key is: the command
+read before deleting and the delete answer the same question once. A source checkout is
+named separately (`:source`) although the sweep decides it exactly as mix, because `src/v1`
+is not a schema and the report says more by keeping it.
+
+```test one-classification-for-report-and-sweep
+given a listing holding every prefix at the current schema
+then the report shows one group per prefix, not one per package
+and the schema prefix is the fall-through, so a bump cannot split it
+```
+
 **Adding a schema to that list would delete live objects**, which is the one way
 reclamation here can cause real loss rather than a recompile. It is as deliberate an act
 as changing the current schema, and a test asserts the current one is never in it.
@@ -189,9 +203,10 @@ inclusively, so `--grace 0` protects everything rather than nothing. Filed as
 **#108**. This section does not state the boundary as intended behaviour; the
 intended semantics are that issue's to settle.
 
-**`--report` groups mix objects one row per package.**
-`Depdep.CLI.Operator.report/1` classifies by a literal `v2` prefix, which no
-longer matches under schema `v3`, so a store with 113 packages prints 113 groups
-instead of one. Filed as **#125**. Deletion is unaffected — `Depdep.Sweep.plan/3`
-uses the fallback described in `#prefixes` — so this is a readability defect in
-the command an operator runs *before* deleting.
+**`--report` grouped mix objects one row per package — fixed in #125/#169.**
+`report/1` classified by a literal `v2` prefix, which stopped matching under `v3`,
+so the production store printed 128 groups instead of one. It now groups by
+`Depdep.Sweep.rule_for/1`, the same classification the sweep itself dispatches on,
+whose mix case is the **fall-through** — so there is no schema literal left to go
+stale at the next bump. Recorded here rather than deleted: the defect reached
+production because `--report` is run by hand and nothing in CI grouped a listing.
