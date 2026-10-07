@@ -163,8 +163,21 @@ beyond the one a pipeline already has.
 root was current while the sweep thought otherwise would be worse than no report,
 because it is the command an operator reads *before* deleting.
 
+**A retired schema's group is reported as reclaimable, with no reachable count.**
+Counting reachability there would be reporting a number with no meaning: nothing
+depdep runs can request the object (`#prefixes`), so a root naming one was written by
+a version nobody runs. The production report said `382 reachable` of 570 `v2` objects,
+which invited reading 1.2 GiB of dead weight as storage still in use — exactly
+backwards in the command an operator reads *before* deleting.
+
 A store it cannot reach, or one with no credentials, is reported as such and exits
 0 — the same rule as everywhere else (`spec/01-goals-and-scope.md#failure-not-error`).
+
+```test report-marks-a-retired-schema-reclaimable
+given a store holding an object under a retired schema
+then --report marks the group retired and prints no reachable count for it
+and a current-schema group still reports its reachable count
+```
 
 ## Two known warts {#warts}
 

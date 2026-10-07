@@ -172,14 +172,29 @@ defmodule Depdep.CLI.Operator do
     |> Enum.group_by(&group(&1.key))
     |> Enum.sort()
     |> Enum.each(fn {group, group_objects} ->
-      {live, dead} = Enum.split_with(group_objects, &MapSet.member?(reachable, &1.key))
-
-      IO.puts(
-        "depdep: #{group}\t#{length(group_objects)} objects, #{mib(group_objects)} — " <>
-          "#{length(live)} reachable, #{length(dead)} not (#{mib(dead)})"
-      )
+      IO.puts(group_line(group, group_objects, reachable))
     end)
   end
+
+  # **A retired schema's reachable count is meaningless, so it is not printed** (#167,
+  # for #140). Nothing depdep runs can request one of those objects, so a root naming
+  # one was written by a version nobody runs — printing "382 reachable" invited an
+  # operator to read a third of a gigabyte of dead weight as live storage, which is
+  # exactly backwards in the command read before deleting.
+  defp group_line(group, objects, reachable) do
+    if retired?(group) do
+      "depdep: #{group}\t#{length(objects)} objects, #{mib(objects)} — RETIRED schema, all reclaimable"
+    else
+      {live, dead} = Enum.split_with(objects, &MapSet.member?(reachable, &1.key))
+
+      "depdep: #{group}\t#{length(objects)} objects, #{mib(objects)} — " <>
+        "#{length(live)} reachable, #{length(dead)} not (#{mib(dead)})"
+    end
+  end
+
+  # The group is the key's first segment for a retired schema, because `group/1` returns
+  # the schema itself for one — see its own comment on the `"v2"` literal, and #125.
+  defp retired?(group), do: group in Depdep.Key.retired()
 
   # Every path a fresh root names. A root that cannot be read is reported and
   # skipped: one malformed root must not make a whole store look unreachable.
