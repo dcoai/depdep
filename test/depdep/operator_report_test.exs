@@ -61,6 +61,50 @@ defmodule Depdep.OperatorReportTest do
     assert Enum.any?(FakeStore.requests(ctx.store), fn {m, _, _} -> m == "GET" end)
   end
 
+  # #167, for #140. The report is the command read BEFORE deleting, so a retired schema's
+  # figure must read as reclaimable rather than live. Printing a reachable count for one
+  # invited an operator to read 1.2 GiB of dead weight as storage still in use — the
+  # production report said "382 reachable" for v2, none of them requestable.
+  @tag verifies: "report-marks-a-retired-schema-reclaimable"
+  test "a retired schema's group says so, and prints no reachable count", ctx do
+    retired = "#{hd(Depdep.Key.retired())}/jason/1.4.4/aaa.tar.gz"
+    :ok = Depdep.S3.put(store_cfg(ctx), retired, write_tmp("some bytes"))
+
+    out = body()
+
+    assert out =~ "RETIRED schema, all reclaimable"
+
+    retired_line =
+      out |> String.split("\n") |> Enum.find(&String.contains?(&1, hd(Depdep.Key.retired())))
+
+    refute retired_line =~ "reachable",
+           "a reachable count for a retired schema reads as live demand, and there is none"
+  end
+
+  test "a current-schema group still reports its reachable count", ctx do
+    live = "#{Depdep.Key.schema()}/jason/1.4.4/aaa.tar.gz"
+    :ok = Depdep.S3.put(store_cfg(ctx), live, write_tmp("some bytes"))
+
+    line =
+      body() |> String.split("\n") |> Enum.find(&String.contains?(&1, Depdep.Key.schema() <> "/"))
+
+    assert line =~ "reachable"
+    refute line =~ "RETIRED"
+  end
+
+  defp store_cfg(_ctx) do
+    {:ok, cfg} = Depdep.S3.config()
+    Depdep.S3.start()
+    cfg
+  end
+
+  defp write_tmp(contents) do
+    path = Path.join(System.tmp_dir!(), "rep-#{System.unique_integer([:positive])}")
+    File.write!(path, contents)
+    on_exit(fn -> File.rm(path) end)
+    path
+  end
+
   # The rule everywhere else: an unreachable store is reported and the run exits 0.
   test "an unreadable store says so rather than raising" do
     System.put_env("DEPDEP_ENDPOINT", "http://127.0.0.1:1")
