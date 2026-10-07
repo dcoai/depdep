@@ -163,12 +163,17 @@ defmodule Depdep.Deps do
   because Mix prunes archive paths before compiling, and a hex dependency's
   SCM lives there.
   """
-  def converged(project_dir, env) do
+  def converged(project_dir, env, opts \\ []) do
     deps =
       Member.ask(project_dir, env, fn ->
         Mix.Local.append_archives()
         Mix.Dep.clear_cached()
-        Mix.Dep.Converger.converge(env: env)
+
+        if Keyword.get(opts, :compile_env, false) do
+          with_application_env(project_dir, env, fn -> Mix.Dep.Converger.converge(env: env) end)
+        else
+          Mix.Dep.Converger.converge(env: env)
+        end
       end)
 
     # Mix loaded every path dependency's project under its own app name. Recording
@@ -180,6 +185,55 @@ defmodule Depdep.Deps do
     end
 
     deps
+  end
+
+  # **A dependency's status depends on the application env, and nothing put the member's
+  # config there** (#161, for #141). `Mix.Dep.Loader`'s `compile_env_status/2` calls
+  # `Config.Provider.valid_compile_env?/1`, which compares the value a dependency
+  # recorded at build time against `Application.fetch_env` IN THIS VM. With the member's
+  # config absent, a dependency recording any value the consumer sets to a non-default is
+  # `:envoutdated` — so a correct restore was refused, and refused again every run,
+  # because the object in the store was never wrong.
+  #
+  # Read with `Config.Reader.read!/2` exactly as `Depdep.Config.read/3` does, and for the
+  # same reason: a `config/config.exs` is ordinary Elixir that may call its own `mix.exs`,
+  # so it is evaluable only with the project loaded — which it is, since this runs inside
+  # `Member.ask`.
+  #
+  # Only the restore check asks for it. The key path does not need it, and
+  # `Depdep.Config.digest_for/2` reads the config it is HANDED rather than the application
+  # env, so the key is unaffected either way.
+  defp with_application_env(project_dir, env, fun) do
+    path = Path.expand(Path.join([project_dir, "config", "config.exs"]))
+
+    if File.exists?(path) do
+      config = Config.Reader.read!(path, env: env)
+      previous = for {app, _} <- config, do: {app, Application.get_all_env(app)}
+
+      Application.put_all_env(config, persistent: true)
+      result = fun.()
+
+      # Put back what was there, so depdep's own VM does not keep a consumer's config.
+      # On the normal path only: a raise ends the run, and `Member.ask` documents that
+      # nothing here is rescued.
+      restore_application_env(previous)
+      result
+    else
+      fun.()
+    end
+  end
+
+  # Delete what the member's config added, then put back what was there. Deleting first
+  # matters: a key the member set and the previous env did not have would otherwise
+  # survive.
+  defp restore_application_env(previous) do
+    for {app, values} <- previous do
+      for {key, _} <- Application.get_all_env(app), not List.keymember?(values, key, 0) do
+        Application.delete_env(app, key, persistent: true)
+      end
+
+      Application.put_all_env([{app, values}], persistent: true)
+    end
   end
 
   # The fields used, and nothing else, so a change in `%Mix.Dep{}` is one
