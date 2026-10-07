@@ -119,6 +119,20 @@ on their last pull — `spec/06-the-run.md#roots`.
 A root nobody has refreshed within `--within` is itself swept, which keeps the
 thing that solves unbounded growth from growing unboundedly.
 
+## What `--report` answers {#report}
+
+`Depdep.CLI.Operator.report/1` says what the store holds and how much of it is
+still reachable, grouped by prefix. It deletes nothing and needs no credential
+beyond the one a pipeline already has.
+
+**It counts a current root by the same function the sweep does**
+(`Depdep.Sweep.current_roots/2`), so the two cannot disagree. A report that said a
+root was current while the sweep thought otherwise would be worse than no report,
+because it is the command an operator reads *before* deleting.
+
+A store it cannot reach, or one with no credentials, is reported as such and exits
+0 — the same rule as everywhere else (`spec/01-goals-and-scope.md#failure-not-error`).
+
 ## Two known warts {#warts}
 
 Recorded rather than specified away, because writing down a defect as though it

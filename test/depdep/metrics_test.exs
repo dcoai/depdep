@@ -23,6 +23,7 @@ defmodule Depdep.MetricsTest do
   end
 
   describe "a unit's cost is two numbers, not one" do
+    @tag verifies: "spec/07-metrics-and-profile.md#metrics"
     test "download and extract are kept apart and summed on request" do
       u = unit(download_us: 400, restore_us: 180)
       assert Metrics.unit_us(u) == 580

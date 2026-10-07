@@ -7,6 +7,7 @@ defmodule Depdep.ReportTest do
   @unkeyable {:skip, "git dependency — the lock carries no dependency list"}
 
   describe "outcome/3 — the three events that used to share one bucket" do
+    @tag verifies: "spec/07-metrics-and-profile.md#summary"
     test "a dependency that cannot be keyed is skipped, in either direction" do
       assert Report.outcome(:pull, @unkeyable, false) == {:done, :skipped}
       assert Report.outcome(:push, @unkeyable, false) == {:done, :skipped}

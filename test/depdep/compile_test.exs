@@ -18,6 +18,7 @@ defmodule Depdep.CompileTest do
       }
     end
 
+    @tag verifies: "spec/06-the-run.md#compile-deps"
     test "misses by label; a hit is not mentioned" do
       units = [unit("jason"), unit("earmark_parser"), unit("spark")]
 

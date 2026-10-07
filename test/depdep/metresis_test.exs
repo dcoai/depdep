@@ -347,6 +347,7 @@ defmodule Depdep.MetresisTest do
       assert header(raw, "metresis-profile") == "depdep sha256:" <> Depdep.Profile.hash()
     end
 
+    @tag verifies: "spec/07-metrics-and-profile.md#handshake"
     test "profile_missing: publish with the same token, retry once with the same key, and land" do
       port = scripted([{428, @missing}, {201, ~s({"key":"depdep","hash":"x"})}, {200, @accepted}])
       configure(port)

@@ -127,6 +127,7 @@ defmodule Depdep.KeyTest do
       refute key(lock, "ash", %{}) == key(lock, "ash", tuned)
     end
 
+    @tag verifies: "spec/03-keys.md#config"
     # The other half of per-app slicing: config for an app OUTSIDE the closure
     # must not move the key, or a project-wide config digest would differ
     # everywhere and no two consumers would ever share an object.
@@ -166,6 +167,28 @@ defmodule Depdep.KeyTest do
       lock = Map.new([hex("a", "1.0.0", ["b"]), hex("b", "1.0.0", ["a"])])
       deps = Depdep.Deps.from_lock(lock)
       assert {:error, {:cycle, _}} = Depdep.Key.compute(deps, %{}, toolchain())
+    end
+  end
+
+  describe "where an object lives" do
+    # `#object-path` specifies the whole shape — <schema>/<name>/<version>/<hash>.tar.gz
+    # — and nothing asserted it (#159). The schema prefix had a test; the rest of the
+    # path, which is what makes a store browsable, did not.
+    @tag verifies: "spec/03-keys.md#object-path"
+    test "an object path is schema, name, version and hash, in that order" do
+      {name, entry} = hex("ash", "3.32.3", [])
+
+      assert Depdep.Key.object(name, entry, "deadbeef") ==
+               "#{Depdep.Key.schema()}/ash/3.32.3/deadbeef.tar.gz"
+    end
+
+    # A git entry's version is its tag, or its ref when no tag was pinned, so the
+    # readable middle segment stays readable for git dependencies too.
+    test "a git dependency's version segment is its tag" do
+      {name, entry} = git("heroicons")
+
+      assert Depdep.Key.object(name, entry, "cafe") ==
+               "#{Depdep.Key.schema()}/heroicons/v2.1.1/cafe.tar.gz"
     end
   end
 
@@ -309,6 +332,7 @@ defmodule Depdep.KeyTest do
       keys[name]
     end
 
+    @tag verifies: "spec/03-keys.md#toolchain"
     test "the host's toolchain names arch, ERTS and the compiler environment" do
       %{base: base, native: native} = Depdep.Key.toolchain(:test)
 

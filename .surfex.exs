@@ -96,5 +96,24 @@
   sources: ["spec/[0-9]*.md"],
   tests: ["test/**/*_test.exs"],
   goldens: [:status],
+  # ## What is NOT required, and why (#159)
+  #
+  # The rule this project wants is surfex's own `triangle: :fail` — "a spec unit, its
+  # tests and its code must meet". #159 triaged the 21 sections that had `implements`
+  # relations and no verifying test anywhere: 20 were owed a verifier and 18 of those
+  # already had a passing test that was simply never connected. One (`#warts`) was
+  # genuinely exempt, because it records defects rather than specifying behaviour and
+  # says so — its relations were retired rather than excused. One (`#report`) had no
+  # section at all.
+  #
+  # That subset is now clear: no section with implementing code lacks a verifier.
+  # `triangle: :fail` still cannot be turned on — 105 gaps remain, 90 of the form
+  # "implements it but no verifying test CALLS it" and 14 "verifies it but calls none
+  # of its code". Closing those is its own effort.
+  #
+  # `section: [:verifies]` is NOT the encoding, and the reason is worth recording so
+  # nobody tries it again: 76 sections would fail it, because depdep's convention is
+  # that a `test` hint carries the `verifies` and REFINES its section. The hint rule
+  # below already holds that end.
   require: [code: [:implements, :excuses], test_hint: [:verifies]]
 ]

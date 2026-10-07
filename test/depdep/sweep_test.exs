@@ -60,6 +60,7 @@ defmodule Depdep.SweepTest do
       assert {:ok, [^root]} = Sweep.current_roots(objects, now: @now)
     end
 
+    @tag verifies: "spec/08-reclamation.md#Reclamation"
     test "the window is configurable, and applied against the given clock" do
       objects = [object("roots/live/main/mix.json", 45)]
 
@@ -106,6 +107,7 @@ defmodule Depdep.SweepTest do
   describe "apt objects" do
     # Small, near-static, shared across every consumer, and their reachable set
     # cannot be computed without apt in the right container. Never swept.
+    @tag verifies: "spec/08-reclamation.md#prefixes"
     test "are never removed, reachable or not" do
       objects = [object("apt/v1/debian-trixie/cpp_4%3a12.2.0-3_amd64.deb", 400)]
       assert doomed(objects, []) == []

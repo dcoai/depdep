@@ -27,6 +27,7 @@ defmodule Depdep.CLIEnabledTest do
   describe "enabled? reads the variable" do
     # The regression guard that matters most: every consumer today sets nothing,
     # and must keep behaving exactly as it did.
+    @tag verifies: "spec/09-cli.md#off-switch"
     test "unset is enabled" do
       with_value(nil)
       assert CLI.enabled?() == {:ok, true}

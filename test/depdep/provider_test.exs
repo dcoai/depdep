@@ -22,6 +22,7 @@ defmodule Depdep.ProviderTest do
   # An unknown provider is a typo in a bootstrap script. Saying which name was
   # not understood, and which are, is the difference between a one-second fix
   # and a confused pipeline.
+  @tag verifies: "spec/05-units-and-providers.md#contract"
   test "an unknown provider names itself and the known ones" do
     assert {:error, reason} = Provider.resolve(["yum"])
     assert reason =~ ~s("yum")
