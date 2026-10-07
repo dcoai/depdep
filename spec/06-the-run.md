@@ -90,6 +90,24 @@ with, the `.app` file's version, and `compile_env`.
 Depdep never used to ask. `Depdep.RestoreCheck.statuses/2` asks, with the same
 call `mix deps` makes, inside each member's project.
 
+**It asks with the member's compile-time configuration loaded into the application
+env, and that is load-bearing rather than incidental.** Mix decides `compile_env`
+by comparing the value a dependency recorded at build time against
+`Application.fetch_env` *in the VM asking the question*. Asked without the
+member's config, every dependency recording a value the consumer sets to a
+non-default is "the dependency compile environment is outdated" — a correct
+restore refused, and refused again on every run, because the object in the store
+was never wrong. `Depdep.Deps.converged/3` takes it as an option, applied only
+here: the key does not need it, and the key's own configuration input is the
+config it is handed rather than the application env. The member's previous values
+are put back afterwards, so depdep's VM does not keep a consumer's configuration.
+
+```test restore-check-asks-with-the-members-config
+given a member whose config sets a value a dependency records as its compile env
+then the value is in the application env while Mix decides each dependency's status
+and it is gone afterwards, and the key path never sees it
+```
+
 `Depdep.RestoreCheck.apply/2` re-buckets a restored unit Mix would rebuild as a
 **miss**, with Mix's own reason, and drops its `saved_us` — the store saved
 nothing there. `Depdep.RestoreCheck.count/1` counts them.

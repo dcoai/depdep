@@ -44,7 +44,7 @@ defmodule Depdep.RestoreCheck do
     |> Enum.flat_map(fn {dir, member_units} ->
       by_app =
         dir
-        |> Depdep.Deps.converged(env)
+        |> Depdep.Deps.converged(env, compile_env: true)
         |> Map.new(fn dep -> {Atom.to_string(dep.app), verdict(dep)} end)
 
       for unit <- member_units, verdict = Map.get(by_app, unit.name), verdict != nil do
