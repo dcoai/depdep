@@ -100,6 +100,21 @@ the schema (`spec/03-keys.md#schema`) cannot quietly stop objects being reclaime
 | `apt/` | never | small, near-static, shared by every consumer and image; its reachable set needs apt in the right container to compute — little to reclaim, more to get wrong |
 | `roots/` | older than `--within` (default 30 days) | they overwrite per consumer, ref and provider, so they accumulate only when a branch dies |
 
+A git dependency's **source** (`src/`, `spec/03-keys.md#source-key`) takes that
+fallback deliberately: every unit's object goes into the root its consumer writes on
+each pull, so a source object's reachable set *is* exactly known — which is the one
+thing that is not true of apt. A source nobody wants any more ages out with the
+consumers that stopped wanting it, and no rule of its own is needed.
+
+Its growth is also the gentlest shape here: **one object per git dependency per locked
+commit, changing only when the lock does.** A mirror's monthly epoch accumulates whether
+or not anything changed; a source does not.
+
+```test source-objects-are-reclaimed-by-reachability
+given a source object no current root names
+then it is swept, and one a current root names is kept
+```
+
 `Depdep.Sweep.protected/2` counts what the grace period is currently holding, so
 a report can say why an object a human expected to go is still there.
 

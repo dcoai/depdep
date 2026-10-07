@@ -114,6 +114,36 @@ defmodule Depdep.SweepTest do
     end
   end
 
+  # #165, for #151. A new prefix needs a rule or an explicit decision; this one takes the
+  # fallback deliberately, and that is verified rather than assumed.
+  describe "a git dependency's source" do
+    @source "src/v1/example.invalid-group-proj/1ff2282c63419e6c410a1595ee3bf42a7ec5f4cd/source.tar.gz"
+
+    # Unlike apt, a source object's reachable set IS computable: every unit's object goes
+    # into the root its consumer writes on each pull, so a source nobody wants any more
+    # ages out with the consumers that stopped wanting it.
+    @tag verifies: "source-objects-are-reclaimed-by-reachability"
+    test "is swept when no current root names it" do
+      objects = [object(@source, 90), object("roots/live/main/mix.json", 3)]
+
+      assert doomed(objects, []) == [@source]
+    end
+
+    test "is kept when a current root names it" do
+      objects = [object(@source, 90), object("roots/live/main/mix.json", 3)]
+
+      assert doomed(objects, [@source]) == []
+    end
+
+    # The grace window applies here as everywhere: a source pushed moments ago must not be
+    # swept by a listing that raced it.
+    test "is protected by the grace window like any other object" do
+      objects = [object(@source, 0), object("roots/live/main/mix.json", 3)]
+
+      assert doomed(objects, [], grace_days: 2) == []
+    end
+  end
+
   describe "git mirrors" do
     # Superseded rather than unreachable: a mirror is a seed whose staleness is
     # harmless, so age is the truer rule and marking would keep every epoch any
