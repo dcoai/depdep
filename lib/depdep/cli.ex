@@ -863,8 +863,8 @@ defmodule Depdep.CLI do
                       --confirm, and refused if it is not the configured bucket:
                       the store can come from an inherited environment variable,
                       so the one irreversible command says its target out loud.
-      --grace DAYS    never remove anything created this recently (default 2),
-                      so a push racing the listing is not swept
+      --grace DAYS    never remove anything less than DAYS old (default 2), so a
+                      push racing the listing is not swept. 0 protects nothing
       --keep-epochs N git mirrors to keep per repository (default 2)
 
     Options for --pull, which records what this consumer needs:

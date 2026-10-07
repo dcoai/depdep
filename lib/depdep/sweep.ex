@@ -193,12 +193,29 @@ defmodule Depdep.Sweep do
 
   defp schema_of(key), do: key |> String.split("/", parts: 2) |> hd()
 
+  # "Within N days" means **strictly less than** N days old (#170, for #108).
+  #
+  # It was `<=`, and that made `--grace 0` protect everything rather than nothing:
+  # `DateTime.diff/3` truncates to whole days, so an object written moments ago is 0 days
+  # old, and 0 was inside a 0-day window. The only value that protected nothing was `-1`,
+  # which depdep's own CI job had to pass with a paragraph explaining the minus sign.
+  #
+  # **Truncation stops mattering once the comparison is strict**, which is worth saying
+  # because it is not obvious: for an integer `d`, `floor(x) < d` is equivalent to `x < d`.
+  # So this is exactly a strict comparison in seconds — there is no residual fraction of a
+  # day, and no reason to change units to get an exact boundary.
+  #
+  # Asked by four callers — `--grace` twice (`plan/3`, `protected/2`) and `--within` twice
+  # (`current_roots/2`, the roots rule in `verdict/6`) — so one rule rather than a
+  # comparison chosen per caller. `<=` was the fail-safe direction at all four, and the
+  # protection that matters is the 2-day default, `--confirm`, `--bucket`, the
+  # no-current-roots refusal and the credential, not an off-by-one in a truncated day count.
   defp newer_than?(%{last_modified: stamp}, days, now) do
     case DateTime.from_iso8601(stamp) do
       # Unparseable means unknown age, and unknown age is treated as new — the
       # fail-safe direction, since the cost of keeping is disk and the cost of
       # deleting wrongly is a recompile.
-      {:ok, at, _} -> DateTime.diff(now, at, :day) <= days
+      {:ok, at, _} -> DateTime.diff(now, at, :day) < days
       _ -> true
     end
   end

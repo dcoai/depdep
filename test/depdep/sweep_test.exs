@@ -21,6 +21,17 @@ defmodule Depdep.SweepTest do
     }
   end
 
+  # Ages in whole days were all the suite ever had, which is why the boundary defect
+  # survived (#170, for #108): an object written SECONDS ago is 0 days old by truncation,
+  # and `--grace 0` protected it.
+  defp seconds_old(key, seconds, size \\ 1000) do
+    %{
+      key: key,
+      size: size,
+      last_modified: DateTime.add(@now, -seconds, :second) |> DateTime.to_iso8601()
+    }
+  end
+
   defp doomed(objects, live, opts \\ []) do
     objects
     |> Sweep.plan(MapSet.new(live), Keyword.merge([now: @now], opts))
@@ -107,6 +118,54 @@ defmodule Depdep.SweepTest do
       objects = [object("v3/a/1/x.tar.gz", 5)]
       assert doomed(objects, [], grace_days: 7) == []
       assert doomed(objects, [], grace_days: 2) == ["v3/a/1/x.tar.gz"]
+    end
+  end
+
+  # #170, for #108. `--grace 0` read as "no grace period" and did the opposite: it protected
+  # everything written in the last 24 hours. Two things compounded — `DateTime.diff/3`
+  # truncates to whole days, so anything written today is 0 days old, and the comparison was
+  # `<=`, so 0 days old was inside a 0-day window. The only value that protected nothing was
+  # -1, which depdep's own CI had to pass with a paragraph explaining the minus sign.
+  #
+  # The suite had never passed 0, and never an age in seconds. That is the whole reason this
+  # reached the first real `--sweep`.
+  describe "the grace window's boundary" do
+    @tag verifies: "grace-zero-protects-nothing"
+    test "--grace 0 protects nothing, including an object written seconds ago" do
+      fresh = seconds_old("#{Depdep.Key.schema()}/jason/1.4.4/aaa.tar.gz", 5)
+
+      assert doomed([fresh], [], grace_days: 0) == [fresh.key]
+      assert Sweep.protected([fresh], grace_days: 0, now: @now) == 0
+    end
+
+    test "--grace 1 still protects that same object" do
+      fresh = seconds_old("#{Depdep.Key.schema()}/jason/1.4.4/aaa.tar.gz", 5)
+
+      assert doomed([fresh], [], grace_days: 1) == []
+      assert Sweep.protected([fresh], grace_days: 1, now: @now) == 1
+    end
+
+    # The boundary that moved: "within N days" is strictly less than N days old, so an
+    # object EXACTLY the grace age is sweepable where it used to be kept.
+    test "an object exactly grace_days old is not protected" do
+      exact = object("#{Depdep.Key.schema()}/jason/1.4.4/aaa.tar.gz", 2)
+
+      assert doomed([exact], [], grace_days: 2) == [exact.key]
+
+      assert doomed([object("#{Depdep.Key.schema()}/jason/1.4.4/bbb.tar.gz", 1)], [],
+               grace_days: 2
+             ) == []
+    end
+
+    # The same comparison answers --within, so the boundary is the same rule there. A root
+    # exactly at the window is no longer current — stated because `<=` was the fail-safe
+    # direction here too.
+    test "--within uses the same boundary, so a root exactly at the window is not current" do
+      at_window = object("roots/consumer/main/mix.json", 30)
+      inside = object("roots/other/main/mix.json", 29)
+
+      assert {:refuse, _} = Sweep.current_roots([at_window], window_days: 30, now: @now)
+      assert {:ok, [^inside]} = Sweep.current_roots([inside], window_days: 30, now: @now)
     end
   end
 
