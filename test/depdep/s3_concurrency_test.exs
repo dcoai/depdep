@@ -28,6 +28,7 @@ defmodule Depdep.S3ConcurrencyTest do
   describe "unset is the derivation, unchanged" do
     # The regression guard that matters most: every consumer today sets nothing,
     # and must keep behaving exactly as it did in v0.2.0.
+    @tag verifies: "spec/04-store-layout.md#concurrency"
     test "unset derives from the scheduler count, bounded at both ends" do
       with_value(nil)
       assert S3.concurrency() >= 8

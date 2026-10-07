@@ -26,6 +26,7 @@ defmodule Depdep.ProfileTest do
   end
 
   @tag verifies: "profile-holds-the-code"
+  @tag verifies: "spec/09-cli.md#profile-task"
   test "the shipped document agrees with the code, both ways" do
     assert Profile.check() == :ok
   end

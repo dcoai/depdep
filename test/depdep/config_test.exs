@@ -102,6 +102,28 @@ defmodule Depdep.ConfigTest do
     assert stderr == ""
   end
 
+  # `#compile-config` says only config/config.exs and its imports are compile-time,
+  # and runtime.exs is "by definition not, and is never read". Nothing asserted it
+  # (#159) — and reading it would put values into the key that the build never saw.
+  @tag verifies: "spec/04-store-layout.md#compile-config"
+  test "config/runtime.exs is never read, so nothing in it reaches the key" do
+    dir = member("plain", "_build")
+
+    File.write!(Path.join([dir, "config", "runtime.exs"]), """
+    import Config
+    config :fixture, runtime_only: :must_not_be_keyed
+    """)
+
+    with_runtime = digest(dir)
+
+    File.rm!(Path.join([dir, "config", "runtime.exs"]))
+    without = digest(dir)
+
+    assert with_runtime == without,
+           "runtime.exs changed the digest, so it was read — the key would carry a value " <>
+             "the compiler never saw"
+  end
+
   test "a member with no config at all is an empty map" do
     dir = Path.join(System.tmp_dir!(), "depdep-cfg-none-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)

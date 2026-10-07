@@ -59,6 +59,7 @@ defmodule Depdep.BuildPathTest do
   # An object is rooted at the member, so a build outside it cannot be
   # represented — and writing one anyway would restore somewhere nobody asked
   # for.
+  @tag verifies: "spec/05-units-and-providers.md#build-path"
   test "a build outside the project is refused, with a reason" do
     assert {:error, reason} = BuildPath.for_project(project("/tmp/somewhere-else"), :test)
     assert reason =~ "outside the project"

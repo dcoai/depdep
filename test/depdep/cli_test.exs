@@ -213,6 +213,7 @@ defmodule Depdep.CLITest do
   # The hint is chosen per class here so a class added later must pick one.
   describe "hint/1 follows the error, not the branch" do
     # Load-bearing wording (#31, metresis #86): consumers and README quote it.
+    @tag verifies: "spec/09-cli.md#hints"
     test "a switch problem keeps its exact sentence" do
       assert CLI.hint(:switch) == "run with --help for the switches this version understands"
     end

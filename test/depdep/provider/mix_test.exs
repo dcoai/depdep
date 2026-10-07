@@ -130,12 +130,14 @@ defmodule Depdep.Provider.MixTest do
       end
     end
 
+    @tag verifies: "spec/05-units-and-providers.md#mix"
     test "a unit is emitted for every entry in the lock, and no others", ctx do
       assert Enum.sort(Map.keys(ctx.by_name)) == ["decimal", "forked", "jason"]
     end
   end
 
   describe "enumerate/1" do
+    @tag verifies: "spec/05-units-and-providers.md#unit"
     test "groups by project so a poncho's members stay distinguishable", ctx do
       assert Enum.all?(ctx.units, &(&1.group == "app"))
       assert Unit.label(ctx.by_name["jason"]) == "app/jason"

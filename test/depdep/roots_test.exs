@@ -15,6 +15,7 @@ defmodule Depdep.RootsTest do
     # A consumer that runs `--pull --provider mix` and `--pull --provider apt`
     # separately must not have the second overwrite the first, or half its live
     # set disappears and reclamation deletes objects it is still using.
+    @tag verifies: "spec/06-the-run.md#roots"
     test "keys by consumer, ref AND provider" do
       refute Roots.path("g/p", "main", "mix") == Roots.path("g/p", "main", "apt")
       refute Roots.path("g/p", "main", "mix") == Roots.path("g/p", "release", "mix")
