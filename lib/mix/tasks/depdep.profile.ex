@@ -9,6 +9,7 @@ defmodule Mix.Tasks.Depdep.Profile do
 
       mix depdep.profile check
       mix depdep.profile check --instance
+      mix depdep.profile golden [--write]
 
   `check` exits non-zero naming every metric or label the code emits that the
   profile does not declare, and every one the profile declares that the code
@@ -59,17 +60,56 @@ defmodule Mix.Tasks.Depdep.Profile do
   end
 
   def run(["check"]) do
-    case Depdep.Profile.check() do
-      :ok ->
-        Mix.shell().info("depdep profile: #{Depdep.Profile.path()} agrees with the code")
+    problems =
+      case Depdep.Profile.check() do
+        :ok -> []
+        {:error, problems} -> problems
+      end ++
+        case Depdep.Profile.golden_check() do
+          :ok -> []
+          {:drift, lines} -> lines
+        end
 
-      {:error, problems} ->
+    case problems do
+      [] ->
+        Mix.shell().info(
+          "depdep profile: #{Depdep.Profile.path()} agrees with the code, and " <>
+            "#{Depdep.Profile.golden_path()} agrees with it"
+        )
+
+      problems ->
         Enum.each(problems, &Mix.shell().error("depdep profile: #{&1}"))
         Mix.raise("#{length(problems)} disagreement(s) between the profile and the code")
     end
   end
 
-  def run(_argv), do: Mix.raise("usage: mix depdep.profile check [--instance]")
+  # **The version guard** (#171, for #111). `check` runs in CI without `allow_failure`, so
+  # putting the golden there needs no new job — and it must not be skippable, which is why
+  # it is here rather than only in the suite.
+  def run(["golden", "--write"]) do
+    document = Depdep.Profile.read()
+    path = Path.join(File.cwd!(), Depdep.Profile.golden_path())
+    File.write!(path, Depdep.Profile.golden(document))
+
+    Mix.shell().info(
+      "depdep profile: wrote #{Depdep.Profile.golden_path()} at version " <>
+        "#{Map.fetch!(document, "version")}"
+    )
+  end
+
+  def run(["golden"]) do
+    case Depdep.Profile.golden_check() do
+      :ok ->
+        Mix.shell().info("depdep profile: #{Depdep.Profile.golden_path()} is current")
+
+      {:drift, lines} ->
+        Enum.each(lines, &Mix.shell().error("depdep profile: #{&1}"))
+        Mix.raise("#{Depdep.Profile.golden_path()} has drifted")
+    end
+  end
+
+  def run(_argv),
+    do: Mix.raise("usage: mix depdep.profile check [--instance] | golden [--write]")
 
   # `{:ok, url, document | :absent}`, or `{:skip, why}` for anything that
   # means "there is nothing to compare against", which is never a failure.

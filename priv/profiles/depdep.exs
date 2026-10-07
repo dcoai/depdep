@@ -22,7 +22,7 @@
   "name" => "Depdep",
   "description" =>
     "What restoring compiled dependencies from a depdep store cost a CI job, and what it saved.",
-  "version" => 1,
+  "version" => 3,
   "guidance" => """
   One depdep run is one `--pull` or one `--push` in one job, and it posts two
   kinds of number. **Per run and per provider** — `depdep.elapsed`, `depdep.span`,
