@@ -298,16 +298,17 @@ reclamation:
 
     # --sweep without --confirm removes nothing.
     #
-    # `--grace=-1`, and the minus sign is the finding: the comparison is
-    # `DateTime.diff(now, at, :day) <= days` in WHOLE days, so `--grace 0`
-    # still protects everything written today — every object here is seconds
-    # old. -1 is the only value that leaves nothing protected. Filed as its
-    # own issue; this job is what found it, on the first run of --sweep
-    # against a store.
+    # `--grace 0` leaves nothing protected, which is what it reads like. It used to need
+    # `-1`: the comparison was `<=` over WHOLE days, so every object here — seconds old,
+    # therefore 0 days old — sat inside a 0-day window. This job is what found that, on the
+    # first run of --sweep against a store, and #108/#170 fixed it. **The job is now its
+    # regression test**: if the boundary ever goes back to inclusive, all 1051 objects are
+    # protected, nothing is deleted, and the three assertions below fail.
+    #
     # The total line is also the page-boundary evidence: 1051 objects came
     # back from a listing that caps at 1000 per page.
-    - mix run -e 'Depdep.CLI.main(["--sweep", "--grace", "-1"])' 2>&1 | tee /tmp/dry.log
-    - grep -qE '1051 objects, 1 current roots, 0 within' /tmp/dry.log
+    - mix run -e 'Depdep.CLI.main(["--sweep", "--grace", "0"])' 2>&1 | tee /tmp/dry.log
+    - grep -qE '1051 objects, 1 current roots, 0 within the 0-day grace period' /tmp/dry.log
     - grep -q 'would delete' /tmp/dry.log
     - grep -qE '1040 objects would be removed' /tmp/dry.log
     # Through a file, not a pipe into `grep -q`: under pipefail an early-
@@ -321,7 +322,7 @@ reclamation:
     # and depdep refuses if that is not the configured one. This job is the rail's
     # example rather than an exception to it — and it is the invocation that would
     # have caught the misconfiguration in #148 at the command, not at the store.
-    - mix run -e 'Depdep.CLI.main(["--sweep", "--grace", "-1", "--confirm", "--bucket", "depdep-ci"])' 2>&1 | tee /tmp/sweep.log
+    - mix run -e 'Depdep.CLI.main(["--sweep", "--grace", "0", "--confirm", "--bucket", "depdep-ci"])' 2>&1 | tee /tmp/sweep.log
     - grep -qE 'removed 1040 of 1040' /tmp/sweep.log
     - mix run -e 'Depdep.CLI.main(["--report"])' 2>&1 | tee /tmp/after.log
     # Ten objects survive — one per package, the one each root names — and they are now

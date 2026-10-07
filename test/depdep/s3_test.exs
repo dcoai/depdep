@@ -352,12 +352,19 @@ defmodule Depdep.S3Test do
   end
 
   describe "delete/2" do
+    # The one call in depdep that destroys anything, and it is reached only for what
+    # Depdep.Sweep.plan/3 dooms. The key is spelled with the CURRENT schema: it was `v2`,
+    # which #166 retired, and a retired schema is a misleading example in the test for the
+    # delete path (#170).
+    @tag verifies: "spec/08-reclamation.md#rails"
     test "removes one object" do
       {port, await} = serve_sequence([""])
-      assert S3.delete(config(port), "v2/a.tar.gz") == :ok
+      key = "#{Depdep.Key.schema()}/a.tar.gz"
+
+      assert S3.delete(config(port), key) == :ok
 
       [line | _] = await.()
-      assert line == "DELETE /bucket/v2/a.tar.gz HTTP/1.1"
+      assert line == "DELETE /bucket/#{key} HTTP/1.1"
     end
   end
 end

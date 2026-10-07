@@ -27,8 +27,17 @@ It is still a cost, which is why the three rails below exist.
   run: it says exactly what it would remove and removes nothing. There is no
   `--dry-run` switch, and none is wanted — the safe behaviour is the default, so
   the destructive act is the one that has to be spelled out.
-- **`--grace DAYS`** (default 2) never touches anything created that recently, so
-  a push racing a listing is not swept.
+- **`--grace DAYS`** (default 2) never touches anything **less than `DAYS` old**, so a
+  push racing a listing is not swept. The boundary is exclusive, so `--grace 0` protects
+  nothing — which is what it reads like, and was not always true (`#warts`). The same
+  comparison answers `--within`, so "within N days" means strictly less than N days old
+  throughout.
+
+```test grace-zero-protects-nothing
+given an object written seconds ago
+then --grace 0 does not protect it and --grace 1 does
+and an object exactly DAYS old is not protected
+```
 - **No current roots means no sweep.** A store nobody uses and a misconfigured
   invocation look identical from the outside, and one of them would delete
   everything. `Depdep.Sweep.current_roots` decides, and refuses with a reason;
@@ -198,10 +207,17 @@ and a current-schema group still reports its reachable count
 Recorded rather than specified away, because writing down a defect as though it
 were intended is how it becomes permanent.
 
-**The grace window's boundary.** `--grace` is applied per whole day and
-inclusively, so `--grace 0` protects everything rather than nothing. Filed as
-**#108**. This section does not state the boundary as intended behaviour; the
-intended semantics are that issue's to settle.
+**The grace window's boundary — fixed in #108/#170.** `--grace` was applied per whole day
+and **inclusively**, so `--grace 0` protected everything rather than nothing, and `-1` was
+the only value that protected nothing. The comparison is strict now and the rule is stated
+where the flag is (above): within N days means strictly less than N days old.
+
+Recorded rather than deleted, because *how* it survived is the reusable part. The suite
+passed ages in whole days and never 0, so nothing ever asked the boundary question; and the
+one job that would have shown it had to pass `--grace -1` to work at all, **with a paragraph
+explaining the minus sign** — the defect was documented as a workaround instead of being
+filed, for a while. That job is the regression test now: at `--grace 0` it sweeps, and an
+inclusive boundary would make it delete nothing and fail.
 
 **`--report` grouped mix objects one row per package — fixed in #125/#169.**
 `report/1` classified by a literal `v2` prefix, which stopped matching under `v3`,
