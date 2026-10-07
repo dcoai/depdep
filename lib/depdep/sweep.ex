@@ -93,6 +93,17 @@ defmodule Depdep.Sweep do
 
   defp verdict(object, live, window_days, keep_epochs, now, epochs) do
     cond do
+      # **A retired schema's objects are unreachable by construction** (#166, for #140).
+      # `Depdep.Key.object/3` builds every path from the CURRENT schema, so nothing
+      # depdep runs will ever ask for one of these — the live set cannot change the
+      # answer, and a root that still names one was written by a version nobody runs.
+      #
+      # Checked first, before the live-set fallback below would spare it. The grace
+      # window still applies: `plan/3` has already rejected anything newer, because the
+      # race a push can lose to a listing does not care which schema it is.
+      retired?(object.key) ->
+        [{object, "schema #{schema_of(object.key)} is retired"}]
+
       String.starts_with?(object.key, "apt/") ->
         []
 
@@ -143,6 +154,10 @@ defmodule Depdep.Sweep do
       _ -> :error
     end
   end
+
+  defp retired?(key), do: schema_of(key) in Depdep.Key.retired()
+
+  defp schema_of(key), do: key |> String.split("/", parts: 2) |> hd()
 
   defp newer_than?(%{last_modified: stamp}, days, now) do
     case DateTime.from_iso8601(stamp) do

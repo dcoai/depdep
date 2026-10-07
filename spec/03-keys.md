@@ -351,5 +351,15 @@ and a different commit names a different one, while a tag or ref pin changes not
 `<schema>/<name>/<version>/<hash>.tar.gz`.
 
 Readable rather than flat, so a store can be browsed and a human can see what is
-in it. The schema leads, which is what makes retiring a schema a matter of
-writing under a new prefix rather than deleting anything.
+in it.
+
+**The schema leads, which is what makes a schema retirable in both directions.**
+Writing under a new prefix needs nothing: two schemas never collide. And removing
+the old one needs nothing either — `Depdep.Key.retired/0` names the retired
+schemas, and reclamation removes their objects **without consulting the live set**
+(`spec/08-reclamation.md#prefixes`), because every path `object/3` builds begins
+with the current schema and so nothing depdep runs can request an older one.
+
+That second half was absent until it was needed: stale roots kept naming `v2`, and
+marking spared it indefinitely — 382 of 570 objects in the production store, none
+of them requestable.

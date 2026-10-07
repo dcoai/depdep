@@ -79,28 +79,72 @@ defmodule Depdep.SweepTest do
     end
   end
 
+  # These name the CURRENT schema deliberately. They were written when `v2` was current
+  # and #166 retired it, which made every one of them fail — a retired schema's objects
+  # are swept regardless of the live set, so "a live mix object" has to be spelled with
+  # whatever `Depdep.Key.schema/0` returns today.
   describe "mix objects" do
     test "an object a current root names survives" do
-      objects = [object("v2/jason/1.4.4/aaa.tar.gz", 10)]
-      assert doomed(objects, ["v2/jason/1.4.4/aaa.tar.gz"]) == []
+      objects = [object("v3/jason/1.4.4/aaa.tar.gz", 10)]
+      assert doomed(objects, ["v3/jason/1.4.4/aaa.tar.gz"]) == []
     end
 
     test "an object no root names goes" do
-      objects = [object("v2/jason/1.4.3/old.tar.gz", 10)]
-      assert doomed(objects, ["v2/jason/1.4.4/aaa.tar.gz"]) == ["v2/jason/1.4.3/old.tar.gz"]
+      objects = [object("v3/jason/1.4.3/old.tar.gz", 10)]
+      assert doomed(objects, ["v3/jason/1.4.4/aaa.tar.gz"]) == ["v3/jason/1.4.3/old.tar.gz"]
     end
 
     # A consumer pushing while the listing was taken has written something no
     # root names yet. Deleting it would be a race, not a reclamation.
     test "anything inside the grace period survives even when unreachable" do
-      objects = [object("v2/jason/1.4.3/fresh.tar.gz", 1)]
+      objects = [object("v3/jason/1.4.3/fresh.tar.gz", 1)]
       assert doomed(objects, []) == []
     end
 
     test "the grace period is configurable and applied against the given clock" do
-      objects = [object("v2/a/1/x.tar.gz", 5)]
+      objects = [object("v3/a/1/x.tar.gz", 5)]
       assert doomed(objects, [], grace_days: 7) == []
-      assert doomed(objects, [], grace_days: 2) == ["v2/a/1/x.tar.gz"]
+      assert doomed(objects, [], grace_days: 2) == ["v3/a/1/x.tar.gz"]
+    end
+  end
+
+  # #166, for #140. The property spec/03-keys.md#object-path claims — that retiring a
+  # schema is a matter of writing under a new prefix rather than deleting anything — was
+  # half true: writing was easy, removing was impossible, because stale roots named the
+  # old prefix and marking spared it forever.
+  describe "a retired schema" do
+    @retired "v2/jason/1.4.4/aaa.tar.gz"
+
+    # The whole point: the live set CANNOT change the answer. No running depdep builds a
+    # v2 path, so a root naming one was written by a version nobody runs.
+    @tag verifies: "retired-schema-is-swept-regardless-of-roots"
+    test "is swept even when a current root names it" do
+      objects = [object(@retired, 10)]
+
+      assert doomed(objects, [@retired]) == [@retired]
+    end
+
+    test "the reason names the schema, so a report says why" do
+      [{_object, reason}] =
+        Sweep.plan([object(@retired, 10)], MapSet.new([@retired]), now: @now)
+
+      assert reason =~ "v2"
+      assert reason =~ "retired"
+    end
+
+    # The grace window is about a push racing a listing, which does not care which
+    # schema it is.
+    test "is still protected by the grace window" do
+      assert doomed([object(@retired, 0)], [], grace_days: 2) == []
+    end
+
+    # The rule must not widen: a current-schema object is decided by reachability, as
+    # before.
+    test "does not take the current schema with it" do
+      live = "v3/jason/1.4.4/aaa.tar.gz"
+
+      assert doomed([object(live, 10)], [live]) == []
+      assert doomed([object(live, 10)], []) == [live]
     end
   end
 
@@ -199,14 +243,14 @@ defmodule Depdep.SweepTest do
     # Unknown age is treated as new: keeping costs disk, deleting wrongly costs
     # a recompile.
     test "is treated as recent, not as ancient" do
-      objects = [%{key: "v2/a/1/x.tar.gz", size: 1, last_modified: "not a date"}]
+      objects = [%{key: "v3/a/1/x.tar.gz", size: 1, last_modified: "not a date"}]
       assert doomed(objects, []) == []
     end
   end
 
   describe "protected/2" do
     test "counts what the grace period is holding" do
-      objects = [object("v2/a/1/x.tar.gz", 1), object("v2/a/1/y.tar.gz", 30)]
+      objects = [object("v3/a/1/x.tar.gz", 1), object("v3/a/1/y.tar.gz", 30)]
       assert Sweep.protected(objects, now: @now, grace_days: 2) == 1
     end
   end

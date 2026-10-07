@@ -95,6 +95,7 @@ the schema (`spec/03-keys.md#schema`) cannot quietly stop objects being reclaime
 
 | Prefix | Rule | Why |
 |---|---|---|
+| a **retired** schema (`Depdep.Key.retired/0`) | removed, **without consulting the live set** | `Depdep.Key.object/3` builds every path from the *current* schema, so no running depdep can request one — it is unreachable by construction, and a root naming it was written by a version nobody runs |
 | anything not below (mix) | mark and sweep against the live set | churn-driven growth, and the live set is exactly known from the roots consumers write |
 | `git/` | keep the newest `--keep-epochs` per repository (default 2) | a mirror is a *seed* whose staleness is harmless by construction, so an older epoch is **superseded** rather than unreachable |
 | `apt/` | never | small, near-static, shared by every consumer and image; its reachable set needs apt in the right container to compute — little to reclaim, more to get wrong |
@@ -121,6 +122,23 @@ a report can say why an object a human expected to go is still there.
 **Marking would be the wrong rule for mirrors.** It would keep every epoch any
 consumer ever pulled, forever. Age is the truer rule there precisely because
 staleness costs a larger delta and nothing else (`spec/05-units-and-providers.md#git`).
+
+**Marking cannot retire a schema, which is why the first rule exists.** A root is
+overwritten per consumer, ref and provider, so a branch that has not built since its
+consumer's pin moved never refreshes its own — and keeps naming the old prefix
+indefinitely. Measured before the rule: 382 of the production store's 570 `v2` objects
+were "reachable" that way, none of them requestable. The grace window still applies to a
+retired object, because a push racing a listing does not care which schema it is.
+
+**Adding a schema to that list would delete live objects**, which is the one way
+reclamation here can cause real loss rather than a recompile. It is as deliberate an act
+as changing the current schema, and a test asserts the current one is never in it.
+
+```test retired-schema-is-swept-regardless-of-roots
+given an object under a retired schema that a current root names
+then it is swept, with the schema in the reason
+and a current-schema object is still decided by reachability
+```
 
 An unparseable timestamp is treated as **recent**, not as ancient. The
 conservative direction costs a delayed deletion; the other loses an object that

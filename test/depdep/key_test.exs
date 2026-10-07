@@ -403,6 +403,20 @@ defmodule Depdep.KeyTest do
   end
 
   describe "the schema" do
+    # THE guard on #166's rule. A schema in `retired/0` is swept regardless of the live
+    # set, so listing the current one there would delete the whole store on the next
+    # sweep. This is the only thing standing between that rule and real loss.
+    @tag verifies: "spec/03-keys.md#schema"
+    test "the current schema is never retired" do
+      refute Depdep.Key.schema() in Depdep.Key.retired(),
+             "the CURRENT schema is listed as retired — a sweep would delete every " <>
+               "object depdep is writing today"
+    end
+
+    test "v2 is retired, so its objects are swept rather than marked" do
+      assert "v2" in Depdep.Key.retired()
+    end
+
     test "is v3" do
       assert Depdep.Key.object("ash", elem(hex("ash", "3.32.3", []), 1), "h") =~ ~r"^v3/"
     end
