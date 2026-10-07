@@ -89,8 +89,30 @@ defmodule Depdep.Key do
   # not an edit.
   @schema "v3"
 
+  # Schemas depdep no longer reads or writes. An object under one of these prefixes
+  # **cannot be requested by any running depdep**, because `object/3` builds every path
+  # from `@schema` — so it is unreachable by construction, whatever the roots say, and
+  # `Depdep.Sweep` removes it without marking (#166, for #140).
+  #
+  # Adding a schema that is still in use would delete live objects. That is the one way
+  # this list can cause real loss, so a test asserts `@schema` is never in it. The list
+  # is a deliberate, reviewed act — the same weight as changing `@schema` itself.
+  @retired ["v2"]
+
   @doc "The schema version this build of depdep reads and writes."
   def schema, do: @schema
+
+  @doc """
+  Schema versions depdep has retired.
+
+  An object under one of these prefixes is unreachable by construction: every path
+  `object/3` builds begins with `schema/0`, so nothing depdep runs will ever ask for it.
+  Reclamation removes them without consulting the live set
+  (`spec/08-reclamation.md#prefixes`), which is what makes retiring a schema a matter of
+  writing under a new prefix **and removing the old one**
+  (`spec/03-keys.md#object-path`).
+  """
+  def retired, do: @retired
 
   def digest(parts),
     do: :crypto.hash(:sha256, Enum.join(parts, "\n")) |> Base.encode16(case: :lower)

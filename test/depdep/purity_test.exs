@@ -31,10 +31,15 @@ defmodule Depdep.PurityTest do
 
   @tag verifies: "spec/10-decisions.md#purity"
   test "each rule module answers identically when asked twice, given the same inputs" do
-    # Depdep.Key — the lock and the toolchain are arguments, including the toolchain,
-    # which is the one input that would otherwise be read from the host.
-    lock = [hex("ash", "3.32.3", ["spark"]), hex("spark", "2.6.0", [])]
-    assert key(lock, "ash") == key(lock, "ash")
+    # Depdep.Key — the lock, the config and the toolchain are all arguments, including the
+    # toolchain, which is the one input that would otherwise be read from the host.
+    # Called directly rather than through the fixture helper: the claim is about this
+    # module, so the test should name it (#166).
+    deps =
+      Depdep.Deps.from_lock(Map.new([hex("ash", "3.32.3", ["spark"]), hex("spark", "2.6.0", [])]))
+
+    assert Depdep.Key.compute(deps, %{}, toolchain()) ==
+             Depdep.Key.compute(deps, %{}, toolchain())
 
     # Depdep.Sweep — the listing, the live set AND the clock are arguments.
     objects = [object("v3/jason/1.4.4/abc.tar.gz", 90), object("roots/live/main/mix.json", 1)]
