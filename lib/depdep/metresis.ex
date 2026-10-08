@@ -258,10 +258,22 @@ defmodule Depdep.Metresis do
   end
 
   @doc """
-  Posts the run. `:ok`, `:disabled`, or `{:error, reason}` — never a raise.
+  Posts the run. Four outcomes, never a raise:
 
-  The caller warns on an error and carries on; nothing here may change an exit
-  code.
+    * `:ok` — recorded.
+    * `:disabled` — no instance configured, or `DEPDEP_ENABLED` is off.
+    * `{:warn, message}` — the instance refused the post for a reason **this run
+      can do nothing about**: it is holding depdep's profile for approval
+      (`profile_pending`), has rejected it (`profile_rejected`), or answered 428
+      again after being sent the document. The samples are not recorded; nothing
+      is retried, because nothing here would change the answer.
+    * `{:error, reason}` — the post failed, and retrying might work.
+
+  The caller warns on either of the last two and carries on; **nothing here may
+  change an exit code** (`spec/01-goals-and-scope.md#failure-not-error`). The
+  distinction between them is for the reader of the warning, not for the run: a
+  `{:warn, _}` names something an operator must fix on the instance, where an
+  `{:error, _}` names something that went wrong in the attempt.
   """
   def post(map, direction, labels \\ nil) do
     case config() do
