@@ -118,7 +118,9 @@ profile-instance-check:
 # `adobe/s3mock` hands objects back and takes `initialBuckets`, which is all
 # this job needs: what is under test is apt's behaviour, not the store's. It
 # does NOT validate signatures, so nothing here is evidence about Signature
-# v4 — the reclamation job (#106) needs a server that does, and picks one.
+# v4 — the reclamation job (#106) needs a server that does, and picks one. The
+# seaweedfs job (#182) adds the other half: a server a reader can actually obtain
+# and run, which is what the guide is allowed to recommend.
 .store:
   stage: store
   services:
@@ -327,6 +329,71 @@ reclamation:
     - mix run -e 'Depdep.CLI.main(["--report"])' 2>&1 | tee /tmp/after.log
     # Ten objects survive — one per package, the one each root names — and they are now
     # one row rather than ten (#169).
+    - grep -qE '^depdep:.v3\s+10 objects.*10 reachable, 0 not' /tmp/after.log
+
+# **An obtainable, self-hostable store** (#182, for #107). The guide told a reader to run
+# MinIO, which cannot be obtained any more: `minio/minio` is gone from Docker Hub,
+# quay.io answers 401, and dl.min.io returns a deliberate HTTP 410. The two other store
+# jobs run adobe/s3mock and andrewgaul/s3proxy — both test doubles, neither something to
+# put a team's build cache in. So depdep had never run against a real self-hostable object
+# store other than MinIO, and #107 is explicit that recommending an untested server would
+# repeat the defect in a new place.
+#
+# SeaweedFS is the most widely deployed of the obtainable ones and serves S3 from a single
+# container. The service writes an identity config before exec'ing, the same shape the
+# reclamation job uses for s3proxy, and creates the bucket: depdep never creates one,
+# deliberately, because the identity it asks for holds Get and Put and nothing else.
+seaweedfs:
+  stage: store
+  services:
+    - name: chrislusf/seaweedfs
+      alias: s3
+      entrypoint: ["/bin/sh", "-c"]
+      command:
+        - |
+          printf '%s' '{"identities":[{"name":"depdep","credentials":[{"accessKey":"depdep","secretKey":"depdep-ci-secret"}],"actions":["Admin","Read","Write","List","Tagging"]}]}' > /etc/s3.json
+          weed server -s3 -s3.config=/etc/s3.json -dir=/data -ip=0.0.0.0 &
+          until wget -qO- http://127.0.0.1:9333/cluster/status >/dev/null 2>&1; do sleep 1; done
+          echo 's3.bucket.create -name depdep-ci' | weed shell >/dev/null 2>&1 || true
+          wait
+  variables:
+    DEPDEP_STORE: "s3://depdep@s3:8333/depdep-ci"
+  before_script:
+    # The same two traps as the other store jobs (#148): group variables outrank a job's
+    # own `variables:`, so the separate form is unset here rather than blanked in YAML,
+    # and DEPDEP_SECRET_KEY is exported because it is a group variable too.
+    - unset DEPDEP_ENDPOINT DEPDEP_BUCKET DEPDEP_ACCESS_KEY DEPDEP_REGION
+    - export DEPDEP_SECRET_KEY=depdep-ci-secret
+    - apt-get update && apt-get install -y --no-install-recommends git curl
+    - mix local.hex --force && mix local.rebar --force
+    - mix deps.get
+    - |
+      for _ in $(seq 1 90); do
+        curl -s -o /dev/null http://s3:8333/ && break
+        sleep 1
+      done
+      curl -s -o /dev/null -w 'seaweedfs answers %{http_code}\n' http://s3:8333/
+  script:
+    # **The job proves its own value first.** A store job against a server that does not
+    # check signatures is evidence of nothing — adobe/s3mock accepted a wrong secret for
+    # months and that is how #148's misconfiguration reached production unnoticed. So:
+    # a deliberately wrong secret must FAIL here before anything else is believed.
+    - |
+      DEPDEP_SECRET_KEY=wrong-on-purpose mix run -e 'Depdep.CLI.main(["--report"])' > /tmp/wrong.log 2>&1 || true
+      grep -qiE 'signature|403|forbidden|denied' /tmp/wrong.log
+      echo "signature validation confirmed: a wrong secret is refused"
+
+    # Over a thousand objects, so the listing pages and the continuation token is signed
+    # for real — one of the three things the guide now says a store must do.
+    - mix run ci/fill_store.exs
+    - mix run -e 'Depdep.CLI.main(["--report"])' 2>&1 | tee /tmp/report.log
+    - grep -qE '1 roots, 1 written in the last' /tmp/report.log
+    - grep -qE '1050 objects.*10 reachable, 1040 not' /tmp/report.log
+
+    # And a confirmed sweep, so Delete is exercised against this server too.
+    - mix run -e 'Depdep.CLI.main(["--sweep", "--grace", "0", "--confirm", "--bucket", "depdep-ci"])' 2>&1 | tee /tmp/sweep.log
+    - grep -qE 'removed 1040 of 1040' /tmp/sweep.log
+    - mix run -e 'Depdep.CLI.main(["--report"])' 2>&1 | tee /tmp/after.log
     - grep -qE '^depdep:.v3\s+10 objects.*10 reachable, 0 not' /tmp/after.log
 
 # Everything a hex publish would do, done locally, on every tag — package,
