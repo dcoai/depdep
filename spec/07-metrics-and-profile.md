@@ -73,7 +73,13 @@ the code does not make.
 instance takes the version verbatim and metresis's loader states the contract — a version
 bump is how an update announces itself — so a version that lags the document announces
 nothing. `Depdep.Profile.content_hash` is the SHA-256 over the document **without**
-`"version"`, and `Depdep.Profile.golden` writes it beside the version into `PROFILE.md`.
+`"version"`, and `Depdep.Profile.golden` writes it beside the version into the file
+`Depdep.Profile.golden_path/0` names. What it prints there is
+`Depdep.Profile.published` — the version, the content hash, and the vocabulary a reader
+needs to see change: each metric with its unit and polarity, the label keys, the `bucket`
+values, and the dashboard's panel titles. Wider than `vocabulary`, which answers the
+narrower question of what the code must emit.
+
 `Depdep.Profile.golden_check` fails in both directions:
 
 - the content hash moved and the version did not — a change nothing announces;

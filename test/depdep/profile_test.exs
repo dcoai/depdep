@@ -3,6 +3,7 @@ defmodule Depdep.ProfileTest do
 
   alias Depdep.Profile
 
+  @tag verifies: "spec/07-metrics-and-profile.md#profile"
   test "the shipped document reads, is a literal with string keys, and encodes as JSON" do
     document = Profile.read()
     assert document["key"] == "depdep"
@@ -24,6 +25,7 @@ defmodule Depdep.ProfileTest do
   # has to be found through the application's priv dir. `__DIR__` was how the
   # first version found it (#73) — a path into a source tree the package does
   # not carry.
+  @tag verifies: "spec/07-metrics-and-profile.md#profile"
   test "the document lives in the application's priv/, not in the source tree" do
     priv = :code.priv_dir(:depdep) |> to_string()
     assert String.starts_with?(Profile.path(), priv)
@@ -106,6 +108,7 @@ defmodule Depdep.ProfileTest do
   # compact — so the same document hashes the same wherever it is computed,
   # which is what metresis compares against.
   describe "hash/0" do
+    @tag verifies: "spec/07-metrics-and-profile.md#profile"
     test "is sha256 of the canonical JSON, hex, and stable" do
       assert Profile.hash() =~ ~r/^[0-9a-f]{64}$/
       assert Profile.hash() == Profile.hash()
@@ -115,6 +118,7 @@ defmodule Depdep.ProfileTest do
                |> Base.encode16(case: :lower)
     end
 
+    @tag verifies: "spec/07-metrics-and-profile.md#profile"
     test "key order does not matter; one changed description does" do
       document = Profile.read()
       reordered = document |> Enum.reverse() |> Map.new()
@@ -160,6 +164,7 @@ defmodule Depdep.ProfileTest do
   # same hole #159 found across the spec, and the same one plan/3 had (#169). Called directly
   # here, asserting what the section says each one answers.
   describe "the two lists the section names" do
+    @tag verifies: "spec/07-metrics-and-profile.md#profile"
     test "vocabulary/1 lists what the document defines" do
       v = Profile.vocabulary()
 
@@ -176,6 +181,7 @@ defmodule Depdep.ProfileTest do
       assert Profile.vocabulary(narrowed).metrics == MapSet.new(["depdep.elapsed"])
     end
 
+    @tag verifies: "spec/07-metrics-and-profile.md#profile"
     test "emitted/0 lists what the code posts, which is what check/1 compares against" do
       e = Profile.emitted()
 
@@ -185,6 +191,7 @@ defmodule Depdep.ProfileTest do
   end
 
   describe "published/1 — what the golden prints" do
+    @tag verifies: "spec/07-metrics-and-profile.md#profile"
     test "reads the panels from the dashboard's layout, where they actually live" do
       p = Profile.published()
 
@@ -200,6 +207,7 @@ defmodule Depdep.ProfileTest do
                Enum.any?(p.metrics, &(elem(&1, 0) == "depdep.saved_total"))
     end
 
+    @tag verifies: "spec/07-metrics-and-profile.md#profile"
     test "golden_path/0 names the committed file" do
       assert Profile.golden_path() == "PROFILE.md"
     end
@@ -218,6 +226,7 @@ defmodule Depdep.ProfileTest do
     # Changing the document without bumping is the defect this exists to stop, and the
     # message has to name WHAT changed — a check that says only "stale" makes a reader diff
     # the file by hand.
+    @tag verifies: "spec/07-metrics-and-profile.md#profile"
     test "a changed vocabulary with a standing version fails, naming the change" do
       changed =
         Map.update!(Profile.read(), "metrics", fn metrics ->
@@ -256,6 +265,7 @@ defmodule Depdep.ProfileTest do
       assert Enum.any?(lines, &(&1 =~ "is still"))
     end
 
+    @tag verifies: "spec/07-metrics-and-profile.md#profile"
     test "golden/1 is a pure function of the document" do
       document = Profile.read()
       assert Profile.golden(document) == Profile.golden(document)
@@ -316,6 +326,7 @@ defmodule Depdep.ProfileTest do
       assert unit == ~s(metric depdep.saved: unit nil on http://m, "s" here)
     end
 
+    @tag verifies: "spec/07-metrics-and-profile.md#profile"
     test "a differing version is reported, and an absent profile is the finding" do
       assert [~s(version 2 on http://m, 1 here)] =
                Profile.compare(mine([]), theirs([], %{"version" => 2}), "http://m")
