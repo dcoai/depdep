@@ -74,18 +74,46 @@ defmodule Depdep.MixProjectTest do
     assert [_, ~s("~> ) <> _] = first_install
   end
 
-  # The guide ships in the package and appears on hexdocs beside the README, so
-  # the same rule binds it. Nothing checked the guide when it was created, and a
-  # private host added to a guide page would have reached hexdocs silently.
-  test "no shipped guide page points at the private host" do
-    pages = Path.wildcard("guide/[0-9]*.md")
-    refute Enum.empty?(pages), "the guide is listed in the package but has no pages"
+  # Every markdown file the package ships appears on hexdocs beside the README, so
+  # the same rule binds all of it. **The subjects are DERIVED from `package/0`,
+  # not listed** (#185, for #184): this check named the README, then gained the
+  # guide when the guide was created, and a third shipped file — CHANGELOG.md —
+  # was never added, so the private group reached hexdocs in four places. A guard
+  # that enumerates what it covers goes stale every time the package grows, which
+  # is this defect's whole mechanism.
+  #
+  # A `.md` filter over `files:` is NOT enough: `guide` is a DIRECTORY, so
+  # filtering alone would silently drop every guide page and quietly remove the
+  # coverage this test used to have. Directory entries are expanded.
+  test "no shipped markdown points at the private host or group" do
+    pages = shipped_markdown()
+
+    assert "README.md" in pages
+    assert "CHANGELOG.md" in pages
+
+    assert Enum.any?(pages, &String.starts_with?(&1, "guide/")),
+           "the guide ships but no page was derived — a directory entry was not expanded, " <>
+             "which is exactly the regression this derivation exists to prevent"
 
     for page <- pages do
       body = File.read!(page)
       refute body =~ "conet.yarina.org", "#{page} names the private host"
       refute body =~ "dco-tek", "#{page} names the private group"
     end
+  end
+
+  # The markdown `package/0` ships, with directory entries expanded. `files:` holds
+  # a mix of files and directories, which is why this cannot be a filter.
+  defp shipped_markdown do
+    Mix.Project.config()[:package][:files]
+    |> Enum.flat_map(fn entry ->
+      cond do
+        File.dir?(entry) -> Path.wildcard(Path.join(entry, "**/*.md"))
+        String.ends_with?(entry, ".md") -> [entry]
+        true -> []
+      end
+    end)
+    |> Enum.sort()
   end
 
   # spec/01-goals-and-scope.md#zero-runtime-deps. Depdep runs before
