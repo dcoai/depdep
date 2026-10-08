@@ -4,8 +4,31 @@
 
 ## 1. What you need
 
-- An S3-compatible object store. MinIO is what this was built against; anything
-  speaking Signature v4 will do.
+- **An S3-compatible object store.** Depdep needs three things from it, and
+  nothing else:
+
+  | | |
+  |---|---|
+  | the S3 object API | `GET`, `PUT`, `DELETE` on a key |
+  | **Signature v4** | including a signed query parameter, for the continuation token |
+  | **ListObjectsV2** with continuation tokens | a store over a thousand objects pages, and depdep sends no `max-keys` |
+
+  Anything doing those three works. Which ones depdep has actually been **run
+  against** is a shorter list, and worth separating from the ones that should
+  work:
+
+  | store | how it was exercised |
+  |---|---|
+  | **SeaweedFS** | the `seaweedfs` job on every pipeline — a filled store over a thousand objects, `--report`, and a confirmed sweep, with a wrong secret asserted to be refused first |
+  | **MinIO** | every measurement in this repository, and the store depdep was developed against since before v0.1.0 |
+  | AWS S3, Backblaze B2, Cloudflare R2, Wasabi, Garage, Ceph RGW | **untested here.** They implement the three requirements above and should work; nobody has run depdep against them, and this guide will not pretend otherwise |
+
+  **On MinIO:** it is still the right answer if you already run it, and it is
+  what the figures in this repository were measured against. It is no longer
+  something you can obtain — `minio/minio` is gone from Docker Hub, `quay.io`
+  answers 401, and `dl.min.io` returns a deliberate HTTP 410 — so the
+  recommendation for a new store is SeaweedFS, because that is the obtainable
+  one depdep's own pipeline proves against.
 - A bucket, and an identity with **Get and Put on that bucket — and nothing
   else**. Depdep never deletes, and an identity that cannot delete is one that
   cannot be talked into wiping your store.
