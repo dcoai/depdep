@@ -15,11 +15,14 @@
 # `require:` is the hard part, and both keys below are achievable TODAY rather
 # than aspirationally:
 #
-#   * `code: [:implements]` — every public item is described by a section. There
-#     are no `classes` and no `rules` because nothing needed excusing: the spec
-#     describes all thirty modules' public surface. #112 planned for excusal
-#     classes; they turned out to be unnecessary, which is a better outcome than
-#     the one planned for.
+#   * `code: [:implements, :excuses]` — every public item is either described by a
+#     section or excused by a class. #112 planned for excusal classes and the first
+#     adoption needed none, which was recorded here as a better outcome than the one
+#     planned for. Three have since proved necessary, each for the same reason: an
+#     item with no behaviour of its own has nothing a test can exercise, so a
+#     relation on it could only be asserted. A module is a namespace (#138), `main/1`
+#     halts so no test can call it and then assert (#137), and a type is a shape
+#     (#183). Every public FUNCTION is still required to be described.
 #   * `test_hint: [:verifies]` — every test hint is verified by a tagged test.
 #
 # ## Why `triangle:` is NOT `:fail`
@@ -82,7 +85,18 @@
     {"halting entry point",
      "It calls System.halt/1, so no test can call it and then assert. What it " <>
        "decides is the spec's subject and is cited there; this wires those " <>
-       "decisions to IO and an exit status."}
+       "decisions to IO and an exit status."},
+    # surfex 0.6 made each `@type` a code item (#183, for #180). A type states the
+    # SHAPE of data, and a shape has no behaviour to verify: no test run exercises a
+    # type, so an `implements` on one could only ever be asserted, never shown — the
+    # same reason the architecture map's module relations were excused above.
+    #
+    # Where the spec describes a shape in substance it may still cite the type and
+    # relate it, by judgement; the class is the default, not a bar.
+    {"type",
+     "A type is the shape of the data its functions take and return. The behaviour " <>
+       "is theirs and is cited where each is described; a shape has nothing a test " <>
+       "can exercise, so a relation on it could only be asserted."}
   ],
   rules: [
     # `name` matches the bare item name, the module being `parent`. `main/N` rather
@@ -90,7 +104,8 @@
     # added later falls into the class quietly, which is what "by class, never by
     # item" means.
     %{class: "halting entry point", kinds: [:function], name: ~r/^main\/\d+$/},
-    %{class: "module container", kinds: [:module]}
+    %{class: "module container", kinds: [:module]},
+    %{class: "type", kinds: [:type]}
   ],
   adoption: :trust,
   sources: ["spec/[0-9]*.md"],
