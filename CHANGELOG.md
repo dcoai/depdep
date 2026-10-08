@@ -4,6 +4,85 @@ What changed for a user of depdep, per release. Each version is a git tag;
 the four earliest also carry GitLab release notes, from which these entries
 are condensed. Issue numbers are dco-tek/depdep's.
 
+## v0.11.0 — 2026-10-08
+
+**No refill, no re-push for existing objects:** keys are unchanged and the schema stays `v3`.
+A git dependency's **source** is a new kind of object (`src/v1/`), so the first run after
+pinning pushes those; everything already in the store stays usable.
+
+### Added
+
+**A git dependency's source is restored, so `deps.get` does not clone it** (#163, #164,
+#165). Depdep already restored a git dependency's *build*; the checkout itself still came
+from a clone on every cold run. The source is keyed on the normalised repository and the
+locked commit — no content hash, because the commit **is** the content address — and
+restored in the first pass, before `mix deps.get` runs. On a warm run measured against
+extc that was about 35 seconds of a 52-second run.
+
+Two hazards worth knowing, both guarded: a source unit is never handed to
+`mix deps.compile` (it is not something Mix can compile, and `--compile-deps` makes Mix's
+status the run's), and a checkout at the wrong commit is a **miss**, not a hit.
+
+### Fixed
+
+**A correct restore is no longer refused when the member's config sets a compile-time
+value** (#161). This is the one most consumers were waiting for. A dependency's status
+depends on the application environment: `Config.Provider.valid_compile_env?/1` compares
+what a dependency recorded at build time against `Application.fetch_env` **in the asking
+VM** — and nothing had put the member's config there. So any dependency recording a value
+the consumer sets to a non-default read as `:envoutdated`, and a perfectly good object was
+refused, every run. The object in the store was never wrong.
+
+**`--explain-rebuilt` names the differing compile-env entry and both values** (#162), so
+`compile env: {:app, :key} was true, is false` replaces a shrug.
+
+**A flat key cannot collide** (#157) — asserted rather than assumed, which is what the
+recursive key exists to prevent.
+
+### Changed — operators
+
+**`--grace 0` protects nothing** (#170). It used to protect everything written in the last
+24 hours: the comparison was inclusive over whole days, so `-1` was the only value that
+protected nothing. `--grace N` now means *strictly less than N days old* throughout, which
+also moves `--within`'s boundary by the same rule. If you pass `--grace -1` anywhere, use
+`0`.
+
+**`--report` prints one row per schema again** (#169/#125), instead of one row per package.
+The grouping broke silently at the `v3` bump and is now taken from the sweep's own
+classification, so the two cannot disagree and a later bump cannot split it.
+
+**A retired schema's objects are swept without consulting the live set** (#166/#167).
+Retiring a schema was only half possible: writing under a new prefix was easy, removing the
+old one was not, because stale roots still named it. `Depdep.Key.retired/0` names the
+retired schemas and reclamation removes their objects outright — nothing depdep runs can
+request one. `--report` shows such a group as reclaimable rather than claiming it is live.
+
+### Changed — metrics
+
+**The profile is version 3** (#171/#111). It had stayed at 1 through five new metrics and
+three new panels, and an instance takes the version verbatim, so updates announced nothing.
+The version is now bound to the document by a content hash and a committed golden, failing
+in both directions: content that moved without a bump, and a bump that announces nothing.
+An instance will offer the newer vocabulary once it receives this document.
+
+### Documentation
+
+The README is an introduction again, with the detail moved verbatim into `guide/`
+(#146/#147). `guide/01-getting-started.md` now states what a store must **do** — the S3
+object API, Signature v4, ListObjectsV2 with continuation tokens — rather than naming a
+product, and separates stores depdep has been run against from stores that should work
+(#182/#107). MinIO is no longer obtainable; SeaweedFS is exercised by depdep's own CI on
+every pipeline, including a check that a wrong secret is refused.
+
+`Depdep.Metresis.post/3` documents all four of its outcomes (#181/#121); it had omitted
+`{:warn, message}`.
+
+### Internal
+
+A fourth reclamation rail — `--confirm` must name the bucket it is aimed at (#150). Spec
+and relation work: #153, #154, #158, #159. depdep's own CI no longer inherits the group's
+store variables (#149). Dev-time dependency `surfex` moved to 0.6.1 (#183).
+
 ## v0.10.0 — 2026-10-06
 
 **No object path changes, so no refill.** Keys are unchanged; schema stays `v3`.
