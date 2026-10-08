@@ -2,7 +2,7 @@
 
 What changed for a user of depdep, per release. Each version is a git tag;
 the four earliest also carry GitLab release notes, from which these entries
-are condensed. Issue numbers are dco-tek/depdep's.
+are condensed. Issue numbers are this project's.
 
 ## v0.11.0 — 2026-10-08
 
@@ -109,7 +109,7 @@ after pinning v0.9.0, this is why.
   instead.
 
   Measured in the production store, not inferred: `extla`'s objects for one commit
-  exist under both `git@…:dco-tek/extla.git` and `https://…/dco-tek/extla.git`,
+  exist under both `git@…:<group>/extla.git` and `https://…/<group>/extla.git`,
   while `extc` locks the https spelling and `visualize`, `visualize2` and `exio`
   lock the ssh one.
 
@@ -187,7 +187,7 @@ It also has a specification, and CI fails on a claim nobody has checked.
   app name — so asking about that directory as a *member* recompiled its
   `mix.exs` over the already-loaded module. One warning per path-dependency
   member per run: nine on a ten-member poncho, about fifty lines a job. Measured
-  on `dco-tek/bizex`: **3 → 0**. This matters beyond tidiness, because stderr is
+  on `bizex`: **3 → 0**. This matters beyond tidiness, because stderr is
   where `restored, but Mix would rebuild it` goes.
 
 - **Reclamation's third rail is fixed and tested** (#126). The refusal to sweep a
@@ -438,7 +438,7 @@ Config is evaluated with the member's `mix.exs` loaded.
 
 ## v0.1.0 — 2026-09-07
 
-A content-addressed store for build artifacts, extracted from dco-tek/bizex,
+A content-addressed store for build artifacts, extracted from `bizex`,
 where the original cut a poncho pipeline from ~28 minutes to 6m24s across 148
 stored objects.
 
