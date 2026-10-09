@@ -189,6 +189,12 @@ native build is driven by a tool the dependency declares — `elixir_make`,
 `Depdep.Lock.hex?/1` and the entry's build tools establish. Those names are in
 the lock entry's child list, so this needs no source on disk.
 
+```test make-managed-is-native-only-for-hex
+given a `make`-managed hex entry and a git entry
+then the hex one is native and the git one is not
+and asking the git one does not raise, because `Depdep.Lock.hex?/1` is checked first
+```
+
 `rustler_precompiled` downloads a build for the target rather than compiling
 one. It counts as native anyway: the bytes are still native bytes, still
 target-specific.

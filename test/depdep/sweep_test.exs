@@ -9,6 +9,7 @@ defmodule Depdep.SweepTest do
   """
   use ExUnit.Case, async: true
 
+  alias Depdep.Provider.Mix.Source
   alias Depdep.Sweep
 
   @now ~U[2026-09-07 12:00:00Z]
@@ -179,7 +180,11 @@ defmodule Depdep.SweepTest do
       assert Sweep.rule_for("apt/v1/debian-bookworm/libbsd0.deb") == :apt
       assert Sweep.rule_for("roots/consumer/main/mix.json") == :roots
       assert Sweep.rule_for("git/v1/some-repo/1700000000/mirror.tar.gz") == :git
-      assert Sweep.rule_for("src/v1/some-repo/abc123/source.tar.gz") == :source
+      # Derived from the function that owns the prefix, not spelled "src/v1" — the same
+      # lesson four sweep tests learned about `v2` (#166). Depdep.Provider.Mix.Source.prefix/0
+      # is what spec/08-reclamation.md#prefixes means by `src/v1`, so the assertion should
+      # ask it rather than duplicate its answer (#173).
+      assert Sweep.rule_for("#{Source.prefix()}/some-repo/abc123/source.tar.gz") == :source
       assert Sweep.rule_for("#{Depdep.Key.schema()}/jason/1.4.4/aaa.tar.gz") == :mix
       assert Sweep.rule_for("#{hd(Depdep.Key.retired())}/jason/1.4.4/aaa.tar.gz") == :retired
     end
