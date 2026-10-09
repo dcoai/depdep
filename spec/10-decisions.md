@@ -122,14 +122,61 @@ commit and the same objects. It is an instrument. If a measurement shows the
 derivation is wrong, the derivation changes —
 `spec/04-store-layout.md#concurrency`.
 
+## The spec says what, not how {#what-not-how}
+
+A spec states what is wanted. It names a code item only where **the item is the
+contract** — an entry point a consumer calls, a CLI flag, a document another system
+parses — and never to explain mechanism. `Depdep.keys_for/3` is the contract.
+`Depdep.Lock.inner_checksum/1` is mechanism: a reader deciding whether depdep does
+what they need never needs it.
+
+This is written down because the gate quietly taught the opposite (#160, #173). Naming
+a function in prose is how `mix surfex.suggest` finds an `implements` relation, and
+`require: [code: [:implements]]` wants every public item in one — so narrating the
+module surface was the cheapest way to be compliant, and `#the-gate` below once
+recorded "the spec describes all of them" as an achievement. It is the diagnosis.
+
+**The cost is measurable.** 83 triangle gaps, and **65 of them** are sections that
+cite many functions and state few checkable claims — `#inputs` cites 13 and has one
+hint, `#metrics` cites 10 and has none, where `spec/08-reclamation.md#prefixes` is a
+table of rules with three hints and one gap. The gap count tracks narration, not
+missing tests.
+
+### Three rules, in the order to apply them
+
+1. **A code item relates to the claim it realises, not to every section that
+   mentions it.** A sentence explaining *why* a rule is safe by naming the function
+   that makes it so is a **citation**, not an implementation. Ten such suggestions
+   were declined across #163–#171 and are recorded as declines so they stop
+   reappearing.
+2. **A module relates to nothing.** A module is a namespace; its behaviour is its
+   functions', each described where it is specified. The `module container` class
+   excuses it (#138), so a module-level `implements` is always too broad — even when
+   the section names the module, as `spec/09-cli.md#profile-task` does.
+3. **What the spec deliberately does not describe is excused, not narrated.**
+   `classes:` and `rules:` exist for that. Reaching for prose to satisfy the gate is
+   the failure this section exists to stop.
+
+### What this does not license
+
+**Deleting a dated claim.** Calibrating a measurement with what changed and when beats
+removing it (#125, #140). Mechanism narration goes; recorded figures stay.
+
+**A test written to satisfy the triangle.** A test that calls a function in order to
+call it manufactures evidence, which is worse than an honest reported gap — the gap is
+at least true. Where a claim has no test worth writing, the relation was wrong.
+
 ## The spec is held to the code, and the gate is narrower than first proposed {#the-gate}
 
 `spec/` is related to the code it describes, and CI fails on a relation nobody has
 looked at. Two of the three gate settings proposal #112 planned are set:
 
-- **`require: [code: [:implements]]`** — every public item is described by a
-  section. No excusal classes were needed: the spec describes all of them, which
-  was not a foregone conclusion when #112 planned for classes.
+- **`require: [code: [:implements, :excuses]]`** — every public item is either
+  described by a section or excused by a class. This once read "no excusal classes
+  were needed: the spec describes all of them", recorded as an achievement; `#what-not-how`
+  above explains why that was the diagnosis. Three classes are now in use — a module is
+  a namespace (#138), `main/1` halts so no test can call it and then assert (#137), and
+  a type is a shape (#183).
 - **`require: [test_hint: [:verifies]]`** — every test hint is verified by a test.
 
 **`triangle: :fail` is not set, and this is a correction to #112 rather than a

@@ -351,6 +351,31 @@ defmodule Depdep.KeyTest do
                key_under(lock, "jason", toolchain())
     end
 
+    # #173, for #160: the one gap in the whole triangle where a test was genuinely owed
+    # rather than a relation being too broad. `Depdep.Lock.hex?/1` was cited by #native and
+    # no test called it.
+    #
+    # It is not merely a filter. A git lock entry is a FOUR-tuple — {:git, url, ref, opts} —
+    # so `elem(entry, 4)` on one raises, and `native?/1` reaches that expression for every
+    # dependency it is asked about. `hex?/1` short-circuiting is what makes the `:make` check
+    # safe at all, which is the part worth asserting.
+    @tag verifies: "make-managed-is-native-only-for-hex"
+    test "make-managed counts as native for a hex entry, and asking a git entry is not a crash" do
+      make_managed = {:hex, :some_dep, "1.0.0", "aaaa", [:mix, :make], [], "hexpm", "bbbb"}
+      plain_hex = {:hex, :jason, "1.4.4", "aaaa", [:mix], [], "hexpm", "bbbb"}
+      from_git = {:git, "https://example.invalid/x.git", "88ab3a0d", [tag: "v2.1.1"]}
+
+      assert Depdep.Lock.hex?(make_managed)
+      refute Depdep.Lock.hex?(from_git)
+
+      assert Depdep.Key.native?(%{entry: make_managed, children: []})
+      refute Depdep.Key.native?(%{entry: plain_hex, children: []})
+
+      # The guard: without hex?/1 this is elem/2 past the end of a 4-tuple.
+      assert tuple_size(from_git) == 4
+      refute Depdep.Key.native?(%{entry: from_git, children: []})
+    end
+
     @tag verifies: "native-only-native"
     test "the native fingerprint reaches a dependency with a native build, and only that one" do
       lock = [
