@@ -50,9 +50,14 @@
 # test's first real red→green moves its relations from `baseline` to `evidence`.
 #
 # `baseline:` is left at its default — REPORTED, not `:fail`. Same judgement as
-# #120 made on `triangle:`, and for the same reason: the 110 triangle gaps and the
-# 177 unvalidated relations are one fact under two names, and gating on it would
+# #120 made on `triangle:`, and for the same reason: the triangle gaps and the
+# unvalidated relations are one fact under two names, and gating on it would
 # demand hollow tests. See `spec/10-decisions.md#the-gate`.
+#
+# The pair was 110 and 177 when #129 wrote this. It reads 57 and 62 on 2026-10-12, which
+# is the same fact shrinking, not the argument weakening — #173's reduction pass took the
+# gaps from 83 to 75 and surfex 0.7.0 took them to 57 by measuring better (#199). Take
+# both numbers from `mix surfex.status`; this comment is not where they live.
 # ## Excusals (#137)
 #
 # `classes`/`rules` get their first use, and #120 was wrong to report them
@@ -122,9 +127,18 @@
   # section at all.
   #
   # That subset is now clear: no section with implementing code lacks a verifier.
-  # `triangle: :fail` still cannot be turned on — 105 gaps remain, 90 of the form
-  # "implements it but no verifying test CALLS it" and 14 "verifies it but calls none
-  # of its code". Closing those is its own effort.
+  # `triangle: :fail` still cannot be turned on. **57 gaps remain as of 2026-10-12**, 48 of
+  # the form "implements it but no verifying test CALLS it" and 9 "verifies it but calls
+  # none of its code", in six of eleven spec files — `00`, `01`, `02`, `09` and `10` are at
+  # zero. Closing the rest is its own effort (#160).
+  #
+  # It read 105/90/14 when #159 wrote this. Two things moved it, and neither was a test
+  # written to satisfy the gate: #173's reduction pass retired four module-level relations
+  # and re-homed a fifth (105 → 75), and surfex 0.7.0 began crediting a test for code its
+  # scan record calls and for code it reaches through an entry point (75 → 57, #199). The
+  # second closed 18 gaps while depdep's own code and tests stood still, so a figure in
+  # this comment can go stale without anybody touching the project — read
+  # `mix surfex.status`, and treat a number written here as dated the day it was written.
   #
   # `section: [:verifies]` is NOT the encoding, and the reason is worth recording so
   # nobody tries it again: 76 sections would fail it, because depdep's convention is

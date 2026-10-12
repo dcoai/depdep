@@ -33,8 +33,24 @@ defmodule Depdep.ProfileTest do
     refute File.read!("lib/depdep/profile.ex") =~ "__DIR__"
   end
 
-  @tag verifies: "profile-holds-the-code"
-  @tag verifies: "spec/09-cli.md#profile-task"
+  # ONE tag naming both ids, never two tags (#199). ExUnit merges tags into a map, so two
+  # `@tag verifies:` attributes are not a union — the second replaces the first, and this
+  # test declared only `#profile-task`. surfex 0.6 took the union, so it recorded a
+  # relation ExUnit never held; surfex 0.7 follows ExUnit (surfex#171) and reported
+  # `#profile-holds-the-code` undeclared, which is how the defect surfaced.
+  #
+  # Both ids have to stay. `profile-holds-the-code` is a `test` HINT, and
+  # `require: [test_hint: [:verifies]]` makes every hint need a verifying test — this is
+  # its only one. `#profile-task` has no other current verifier either; its other two
+  # relations are retired.
+  #
+  # **The list is not selectable by `mix test --only`, and nothing can make it so.**
+  # `ExUnit.Filters.has_tag/2` matches the tag term exactly or compares `to_string/1` of
+  # it, and `to_string/1` of a list of strings concatenates them — so neither id matches,
+  # where a single-string tag matches fine. Do not "fix" that by splitting this back into
+  # two `@tag` lines: that restores the silent drop this comment exists to record, and
+  # loses a relation the gate requires. Filed with surfex as dco-tek/surfex#190.
+  @tag verifies: ["profile-holds-the-code", "spec/09-cli.md#profile-task"]
   test "the shipped document agrees with the code, both ways" do
     assert Profile.check() == :ok
   end

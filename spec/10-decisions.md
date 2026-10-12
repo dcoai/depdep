@@ -136,11 +136,21 @@ a function in prose is how `mix surfex.suggest` finds an `implements` relation, 
 module surface was the cheapest way to be compliant, and `#the-gate` below once
 recorded "the spec describes all of them" as an achievement. It is the diagnosis.
 
-**The cost is measurable.** 83 triangle gaps, and **65 of them** are sections that
-cite many functions and state few checkable claims — `#inputs` cites 13 and has one
-hint, `#metrics` cites 10 and has none, where `spec/08-reclamation.md#prefixes` is a
-table of rules with three hints and one gap. The gap count tracks narration, not
-missing tests.
+**The cost is measurable.** 83 triangle gaps when #173 measured this on 2026-10-09, and
+**65 of them** were sections that cite many functions and state few checkable claims —
+`#inputs` cites 13 and has one hint, `#metrics` cites 10 and has none, where
+`spec/08-reclamation.md#prefixes` is a table of rules with three hints and one gap. The gap
+count tracks narration more than missing tests.
+
+**That share is now known to be overstated, and the correction is worth as much as the
+original claim** (#199). surfex 0.7.0 began crediting a test for code its scan record calls
+and for code it reaches through an entry point, and **18 gaps closed with no change to this
+project's spec, code or tests** — 75 to 57. Two of them were in `#s3`, one of the sections
+the pass counted as narration. So some of the 65 were not narration at all; they were the
+tool unable to see a test reach the function through a helper. Which, and how many, is
+#160's measurement to redo. The diagnosis above stands — narration is real and the three
+rules below are the answer to it — but it was argued from a number that was partly
+measuring something else.
 
 ### Three rules, in the order to apply them
 
@@ -188,17 +198,18 @@ either hollow tests or the dismantling of the architecture map — and hollow te
 are how a gate teaches people to confirm without reading, which is the failure
 `guides/writing-specs.md` §2 exists to prevent.
 
-The triangle is therefore **reported, not gated**. 110 gaps are visible in every
-`mix surfex.status`, and closing one where it is genuinely closeable is ordinary
-work.
+The triangle is therefore **reported, not gated**. The gaps are visible in every
+`mix surfex.status` — 110 when #120 decided this, 57 on 2026-10-12 — and closing one where
+it is genuinely closeable is ordinary work.
 
 **Since surfex 0.5 the same gap has a second name, and it is not a second
 problem** (#129). 0.5 validates an `implements` relation by what a test *did* —
 failed, then passed against the code — and refuses to let one be asserted by hand.
 Carrying `implements` through a test requires that test to verify the section
-*and* call the implementing code, which is the triangle. So depdep's 177
-`implements` relations report as `unvalidated: 177`, which is the same 110 gaps
-counted per relation instead of per section.
+*and* call the implementing code, which is the triangle. So depdep's `implements`
+relations report as `unvalidated:`, which is the same gaps counted per relation instead of
+per section. #129 read 177 against 110; 2026-10-12 reads 62 against 57. The two numbers
+move together because they are one fact, which is the point.
 
 `adoption: :trust` and a one-shot `mix surfex.baseline` record *why* the suite is
 trusted — 392 tests that already pass, written beside this code, with nothing left
@@ -206,7 +217,7 @@ to discriminate — rather than leaving the fact silent. `baseline:` is left
 reported, not `:fail`, for the reason above: the alternative is still hollow
 tests.
 
-A reader finding `unvalidated: 177` and 110 triangle gaps should read them as one
+A reader finding an `unvalidated:` count and a triangle gap count should read them as one
 fact. There is no second decision entry for it, deliberately.
 
 ## What extraction found {#what-extraction-found}
