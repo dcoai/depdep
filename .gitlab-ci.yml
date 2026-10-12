@@ -475,6 +475,122 @@ seaweedfs:
     - mix run -e 'Depdep.CLI.main(["--report"])' 2>&1 | tee /tmp/after.log
     - grep -qE '^depdep:.v3\s+10 objects.*10 reachable, 0 not' /tmp/after.log
 
+# **depdep against exio** (#195, for #189). The store depdep's own fleet now runs on,
+# so the client is held to it on every pipeline rather than by the hand exercise of
+# 2026-10-12 recorded on #168.
+#
+# **A service container, not the live instance.** Pointing a job at the running store
+# would couple this pipeline to an instance being up (the reason
+# `profile-instance-check` is `allow_failure`), need the fleet's credentials as CI
+# variables with the group-precedence trap from #148/#149, and put a sweep job with
+# Delete against a store ten consumers depend on. None of that is worth it: what is
+# under test is whether exio answers correctly, and a fresh one answers the same.
+#
+# **Everything is seeded from the environment**, which is why this needs no `docker
+# exec` and so works as a service at all: `Exio.Accounts.Bootstrap` creates the admin
+# and the root S3 key at first boot, and the bucket is one REST call. The bucket could
+# equally be a signed `PUT /depdep-ci` (exio dispatches `CreateBucket`), but a bearer
+# token means no SigV4 to construct in a `before_script` — no `awscli`, no extra
+# package. exio drives its own conformance CI this way.
+#
+# **ON THE PIN, which is the honest limit of this job.** #189's premise is that a
+# standing job catches the next exio release breaking depdep's client. A pinned image
+# does NOT do that — it makes the result a repeatable snapshot rather than a standing
+# check, and a new exio is untested until someone bumps the line below. Floating is not
+# available: exio's registry has no `latest` tag and a service image is fixed in YAML,
+# so nothing here can resolve the newest at runtime. Bumping this pin IS the check.
+#
+# Pulling it needs `dco-tek/depdep` on exio's CI job token allowlist, granted for this.
+exio:
+  stage: store
+  services:
+    - name: gitlab.conet.yarina.org:5005/dco-tek/exio:0.1.18
+      alias: exio
+  variables:
+    # Reaches the service as well as the job, which is how the bootstrap sees it.
+    # None of these is a secret: the store lives and dies with the pipeline, and a
+    # real credential here would be the thing #148 was about. The password has to
+    # clear exio's own rules (12+ characters, not the username, not a common one) or
+    # the bootstrap raises rather than quietly generating one.
+    EXIO_ADMIN_PASSWORD: "depdep-ci-throwaway-admin"
+    EXIO_ADMIN_API_TOKEN: "depdep-ci-throwaway-api-token"
+    EXIO_ROOT_ACCESS_KEY_ID: "EXDEPDEPCI0000000001"
+    EXIO_ROOT_SECRET_ACCESS_KEY: "depdep-ci-throwaway-secret"
+    # The URL form, with the secret deliberately NOT in it: depdep refuses a store URL
+    # carrying a password component, so it travels as DEPDEP_SECRET_KEY below.
+    DEPDEP_STORE: "s3://EXDEPDEPCI0000000001@exio:9000/depdep-ci"
+  before_script:
+    # The same two traps as the other store jobs (#148): group variables outrank a
+    # job's own `variables:`, so the separate form is unset here rather than blanked in
+    # YAML, and DEPDEP_SECRET_KEY is exported because it is a group variable too.
+    # DEPDEP_REGION stays unset on purpose — exio defaults to us-east-1 server-side and
+    # so does depdep, so naming it would be a third place for them to disagree.
+    - unset DEPDEP_ENDPOINT DEPDEP_BUCKET DEPDEP_ACCESS_KEY DEPDEP_REGION
+    - export DEPDEP_SECRET_KEY="$EXIO_ROOT_SECRET_ACCESS_KEY"
+    - apt-get update && apt-get install -y --no-install-recommends git curl
+    - mix local.hex --force && mix local.rebar --force
+    - mix deps.get
+    # Readiness on the console port, which answers only once the system database is
+    # migrated and the bootstrap has run — so a 200 here means the root key exists.
+    - |
+      for _ in $(seq 1 90); do
+        curl -fs -o /dev/null http://exio:4000/health && break
+        sleep 1
+      done
+      curl -s -o /dev/null -w 'exio health answers %{http_code}\n' http://exio:4000/health
+    # The bucket. Checked rather than fired and forgotten: a silent failure here would
+    # surface later as a confusing NoSuchBucket from depdep instead of a plain message.
+    - |
+      code=$(curl -s -o /tmp/bucket.json -w '%{http_code}' -X POST \
+        -H "Authorization: Bearer $EXIO_ADMIN_API_TOKEN" \
+        -H 'Content-Type: application/json' \
+        -d '{"name":"depdep-ci"}' \
+        http://exio:4000/api/v1/buckets)
+      echo "create bucket depdep-ci: HTTP $code"
+      cat /tmp/bucket.json; echo
+      case "$code" in 200|201|409) ;; *) echo "bucket not created"; exit 1 ;; esac
+  script:
+    # **The job proves its own value first.** A store job against a server that does
+    # not check signatures is evidence of nothing — adobe/s3mock accepted a wrong
+    # secret for months and that is how #148's misconfiguration reached production
+    # unnoticed. exio refused a wrong secret in the #168 hand run; this is what keeps
+    # that true.
+    - |
+      DEPDEP_SECRET_KEY=wrong-on-purpose mix run -e 'Depdep.CLI.main(["--report"])' > /tmp/wrong.log 2>&1 || true
+      grep -qiE 'signature|403|forbidden|denied' /tmp/wrong.log
+      echo "signature validation confirmed: a wrong secret is refused"
+
+    # Over a thousand objects, so the listing pages and the continuation token is
+    # signed for real — the hand run saw 1051 across a page boundary in 1.3 s.
+    - mix run ci/fill_store.exs
+    - mix run -e 'Depdep.CLI.main(["--report"])' 2>&1 | tee /tmp/report.log
+    - grep -qE '1 roots, 1 written in the last' /tmp/report.log
+    - grep -qE '1050 objects.*10 reachable, 1040 not' /tmp/report.log
+
+    # The reclamation rails. **These refuse at argument time, before any request, so
+    # they are NOT evidence about exio** — the retired-schema rule was left out of this
+    # job for exactly that reason. They are here for a different one: the second rail
+    # prints the bucket depdep parsed out of THIS job's DEPDEP_STORE, so it is a
+    # self-check on the job's own configuration. A URL that silently resolved to the
+    # wrong bucket would be caught here rather than halfway through a sweep.
+    #
+    # Matched on the message, not on the word "bucket": a grep that loose would pass on
+    # almost any output, including a refusal that had stopped working.
+    - |
+      mix run -e 'Depdep.CLI.main(["--sweep", "--grace", "0", "--confirm"])' > /tmp/norail.log 2>&1 || true
+      grep -qF -- '--confirm needs --bucket' /tmp/norail.log
+      echo "--confirm without --bucket is refused"
+    - |
+      mix run -e 'Depdep.CLI.main(["--sweep", "--grace", "0", "--confirm", "--bucket", "not-this-store"])' > /tmp/wrongbucket.log 2>&1 || true
+      grep -qF -- 'the store configured here is "depdep-ci" — refusing to sweep' /tmp/wrongbucket.log
+      echo "--bucket naming another store is refused, and depdep read this job's bucket correctly"
+
+    # And a confirmed sweep, so Delete is exercised against this server too.
+    - mix run -e 'Depdep.CLI.main(["--sweep", "--grace", "0", "--confirm", "--bucket", "depdep-ci"])' 2>&1 | tee /tmp/sweep.log
+    - grep -qE 'removed 1040 of 1040' /tmp/sweep.log
+    - mix run -e 'Depdep.CLI.main(["--report"])' 2>&1 | tee /tmp/after.log
+    - grep -qE '^depdep:.v3\s+10 objects.*10 reachable, 0 not' /tmp/after.log
+
 # Everything a hex publish would do, done locally, on every tag — package,
 # docs through the ex_doc escript (deps/0 stays empty), hex's own checks — so
 # the day a real publish is wanted (#73) nothing is being tried for the first
