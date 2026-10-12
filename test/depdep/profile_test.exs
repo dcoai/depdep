@@ -198,10 +198,22 @@ defmodule Depdep.ProfileTest do
       # The first version of this looked for "panels" directly under each dashboard and
       # found none, which would have published an empty list and had the golden record
       # that as correct. The nesting is layout -> panels.
-      assert length(p.panels) == 9
+      #
+      # **Counted independently rather than frozen.** This asserted `== 9`, which made
+      # every legitimate panel the same red as the traversal bug it exists to catch —
+      # the #184/#185 defect class, a guard whose subjects are enumerated by hand. The
+      # counts below come from scanning the document for things SHAPED like a panel or
+      # a metric, at any depth, which is a different traversal from `published/1`'s
+      # path-walk. So a regression to looking directly under "dashboard" still reds it
+      # (0 against 10), and adding a panel does not.
+      document = Profile.read()
+
+      assert length(p.panels) == count_shaped(document, ["title", "viz", "query"])
+      assert p.panels != []
       assert "Units by bucket" in p.panels
 
-      assert length(p.metrics) == 14
+      assert length(p.metrics) == count_shaped(document, ["key", "name", "polarity"])
+      assert p.metrics != []
 
       assert {"depdep.saved_total", "s", "lower_worse"} in p.metrics or
                Enum.any?(p.metrics, &(elem(&1, 0) == "depdep.saved_total"))
@@ -212,6 +224,19 @@ defmodule Depdep.ProfileTest do
       assert Profile.golden_path() == "PROFILE.md"
     end
   end
+
+  # How many things in the document carry every one of `keys`, at any depth.
+  # Shape-based, so it does not share `published/1`'s knowledge of where panels
+  # and metrics are nested — which is the whole point of counting this way.
+  defp count_shaped(%{} = map, keys) do
+    own = if Enum.all?(keys, &Map.has_key?(map, &1)), do: 1, else: 0
+    own + (map |> Map.values() |> count_shaped(keys))
+  end
+
+  defp count_shaped(list, keys) when is_list(list),
+    do: list |> Enum.map(&count_shaped(&1, keys)) |> Enum.sum()
+
+  defp count_shaped(_other, _keys), do: 0
 
   describe "the golden, and the two ways it fails" do
     test "the committed golden matches the shipped profile" do

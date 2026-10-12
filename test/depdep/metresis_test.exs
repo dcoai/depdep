@@ -306,7 +306,19 @@ defmodule Depdep.MetresisTest do
       assert Enum.find(samples, &(&1["metric"] == "depdep.extract"))["value"] == 0.1
     end
 
-    test "labels carry the dimensions rather than encoding them in the key", %{samples: samples} do
+    # Tagged in #194, not before. Re-validating a dangling `implements` on
+    # `samples/1` found that NOTHING verified #posting — the section had three
+    # test hints and no verifier of its own, which is the pattern #160 exists to
+    # close at scale. This test checks what the section claims samples/1 does:
+    # build the bodies, with the dimensions in labels rather than in the key.
+    @tag verifies: "spec/07-metrics-and-profile.md#posting"
+    test "labels carry the dimensions rather than encoding them in the key" do
+      # Calls samples/1 here rather than taking the setup's value, so the function
+      # this verifies #posting for is named in the test that verifies it. A dependency
+      # reached through a setup is invisible to anything reading the test — surfex
+      # among them — and this one is the section's subject.
+      samples = Metresis.samples(run_map())
+
       download = Enum.find(samples, &(&1["metric"] == "depdep.download"))
       assert download["labels"] == %{"provider" => "mix", "unit" => "jason", "bucket" => "pulled"}
     end
@@ -636,6 +648,22 @@ defmodule Depdep.MetresisTest do
       phase = %Phase{provider: "mix", direction: :pull, span_us: 1, concurrency: 8, units: [unit]}
       samples = [phase] |> Metrics.to_map(:pull, 1) |> Metresis.samples()
       refute Enum.any?(samples, &(&1["metric"] in ["depdep.saved", "depdep.saved_total"]))
+    end
+
+    test "the bootstrap posts in seconds, and a run that could not read it posts nothing" do
+      unit = %Unit{provider: "mix", label: "app/jason", bucket: :pulled}
+      phase = %Phase{provider: "mix", direction: :pull, span_us: 1, concurrency: 8, units: [unit]}
+
+      samples = [phase] |> Metrics.to_map(:pull, 1, 1_850_000) |> Metresis.samples()
+
+      # Seconds on the wire, microseconds in the `--metrics` JSON — the same split as
+      # every other duration here. 1.85 s is #191's measured cold bootstrap.
+      assert [%{"value" => 1.85}] = Enum.filter(samples, &(&1["metric"] == "depdep.bootstrap"))
+
+      # Dropped rather than posted as zero: a zero would be a claim the bootstrap was
+      # free, and the same rule `depdep.saved_total` follows above.
+      bare = [phase] |> Metrics.to_map(:pull, 1) |> Metresis.samples()
+      refute Enum.any?(bare, &(&1["metric"] == "depdep.bootstrap"))
     end
   end
 

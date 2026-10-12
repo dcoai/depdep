@@ -46,6 +46,8 @@ defmodule Depdep.MetricsTest do
     # Units run 8-32 at a time, so summed unit time normally EXCEEDS the span
     # that contains them. This is the measurement, not a bug to reconcile — and
     # this test exists so neither is later "corrected" into the other.
+    # The section's claim that sum_unit_us/1 says where the time went (#194).
+    @tag verifies: "spec/07-metrics-and-profile.md#metrics"
     test "the sum may exceed the span, and that is not an error" do
       p = phase([unit(download_us: 800), unit(download_us: 800)], span_us: 1_000)
 
@@ -54,6 +56,8 @@ defmodule Depdep.MetricsTest do
       assert Metrics.sum_unit_us(p) > p.span_us
     end
 
+    # The section's claim: how much of the configured concurrency was used (#194).
+    @tag verifies: "spec/07-metrics-and-profile.md#metrics"
     test "effective parallelism is the ratio of the two" do
       p = phase([unit(download_us: 1_000), unit(download_us: 1_000)], span_us: 1_000)
       assert Metrics.effective_parallelism(p) == 2.0
@@ -76,9 +80,39 @@ defmodule Depdep.MetricsTest do
     end
   end
 
+  describe "what the store saved, which is nil when nothing knew" do
+    # Added in #194. The section names `saved_total_us/1` as the figure for what the
+    # store saved, and NOTHING called it directly — it was reached only through
+    # `to_map/4`, so its own contract (summing across phases, and absence rather than
+    # zero) was never asserted. Found by re-validating the relation the section's
+    # citation manufactured, which is the #160 pathology seen from the other side: a
+    # cited item with no verifier is a claim nobody checks.
+    @tag verifies: "spec/07-metrics-and-profile.md#metrics"
+    test "it sums what every phase saved, across providers" do
+      mix = phase([unit(saved_us: 1_000), unit(saved_us: 500)])
+      apt = phase([unit(saved_us: 250)])
+
+      assert Metrics.saved_total_us([mix, apt]) == 1_750
+    end
+
+    @tag verifies: "spec/07-metrics-and-profile.md#metrics"
+    test "a run where no hit knew its compile time has no total, rather than zero" do
+      # Zero would drag an average toward it and read as 'the store saved nothing',
+      # which is a different claim from 'nothing measured it'.
+      assert Metrics.saved_total_us([phase([unit()])]) == nil
+    end
+
+    @tag verifies: "spec/07-metrics-and-profile.md#metrics"
+    test "one hit that knew is enough for a total, and the unknowing are not counted as zero" do
+      assert Metrics.saved_total_us([phase([unit(saved_us: 300), unit()])]) == 300
+    end
+  end
+
   describe "stragglers and bytes" do
     # One large object finishing long after 147 others is invisible in an
     # aggregate and obvious here.
+    # The section's claim that the outliers worth looking at are named (#194).
+    @tag verifies: "spec/07-metrics-and-profile.md#metrics"
     test "the slowest unit is named, not just its duration" do
       units = [unit(label: "small", download_us: 10), unit(label: "huge", download_us: 9_000)]
       assert Metrics.slowest(phase(units)).label == "huge"
@@ -88,6 +122,8 @@ defmodule Depdep.MetricsTest do
       assert Metrics.slowest(phase([])) == nil
     end
 
+    # The section's claim that bytes/1 is the volume figure (#194).
+    @tag verifies: "spec/07-metrics-and-profile.md#metrics"
     test "bytes are summed across the phase" do
       assert Metrics.bytes(phase([unit(bytes: 100), unit(bytes: 20)])) == 120
     end
@@ -108,6 +144,12 @@ defmodule Depdep.MetricsTest do
       assert map.elapsed_us == 900
     end
 
+    # Tagged in #194. The section cited ten code items against ONE verifier, so adding
+    # a paragraph to it dangled eight `implements` relations that nothing could
+    # re-validate — the narration-density pathology #160 measures. This test checks the
+    # section's per-run-and-per-provider claim: the rollups are carried, so a reader
+    # does not recompute them.
+    @tag verifies: "spec/07-metrics-and-profile.md#metrics"
     test "a phase carries the rollups, so a reader does not recompute them", %{map: map} do
       [phase] = map.phases
 
@@ -146,7 +188,55 @@ defmodule Depdep.MetricsTest do
     end
   end
 
+  describe "the bootstrap, which depdep cannot cache because it precedes the cache" do
+    @tag verifies: "spec/07-metrics-and-profile.md#metrics"
+    test "bootstrap_us/0 reports the VM's own clock, in microseconds" do
+      # `Mix.install/2` runs inside the already-started VM, so wall-clock-since-VM-start
+      # read at depdep's first line IS the bootstrap. Measured in #191: 2402 ms against
+      # a 2490 ms process total, the gap being VM start and exit.
+      #
+      # This asserts the CONTRACT, not a duration — a test that pinned seconds would be
+      # asserting the speed of whatever machine ran it. What must hold is the unit and
+      # the direction of travel.
+      first = Metrics.bootstrap_us()
+
+      assert is_integer(first)
+      assert first > 0
+
+      # **Microseconds, not the milliseconds the VM hands out — checked by scale, not
+      # by magnitude.** The first version of this asserted `first >= 1_000` and claimed
+      # to catch a dropped conversion. It does not: by the time the suite reaches this
+      # line the VM has been up for seconds, so the raw millisecond figure clears 1_000
+      # too. Proven by dropping the `* 1_000` and watching this test stay green.
+      #
+      # A sleep gives an independently known interval, so the UNIT is what is under
+      # test: 50 ms must read as ~50_000, and a figure near 50 means milliseconds
+      # leaked through. Also the monotonicity check — `:wall_clock` counts from VM
+      # start rather than from the system clock, so an NTP step cannot move it.
+      Process.sleep(50)
+      elapsed = Metrics.bootstrap_us() - first
+
+      assert elapsed >= 40_000,
+             "#{elapsed} over a 50 ms sleep is milliseconds, not microseconds"
+    end
+
+    @tag verifies: "spec/07-metrics-and-profile.md#metrics"
+    test "to_map carries it, and a caller that did not read the clock says nothing" do
+      p = phase([unit()], span_us: 500)
+
+      assert Metrics.to_map([p], :pull, 900, 1_500_000).bootstrap_us == 1_500_000
+
+      # `nil` rather than 0 for a caller that could not read it. Zero would be a claim
+      # that the bootstrap was free, which is the opposite of what #191 measured, and
+      # `Depdep.Metresis` drops the sample instead of posting that claim.
+      assert Metrics.to_map([p], :pull, 900).bootstrap_us == nil
+    end
+  end
+
   describe "write/2" do
+    # The section's closing claim: the measurements are recorded for a later push
+    # to find (#194).
+    @tag verifies: "spec/07-metrics-and-profile.md#metrics"
     test "writes JSON that the encoder produced" do
       path =
         Path.join(System.tmp_dir!(), "depdep-metrics-#{System.unique_integer([:positive])}.json")

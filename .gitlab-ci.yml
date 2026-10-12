@@ -105,6 +105,85 @@ profile-instance-check:
   script:
     - mix depdep.profile check --instance
 
+# **What a consumer pays before depdep can help them** (#194, for #191).
+#
+# Every consumer job clones this repository and compiles it before depdep can
+# restore anything — the one cost depdep cannot cache, because it is what runs
+# before the cache exists. `depdep.bootstrap` now reports it from every consumer
+# run, but a consumer's figure cannot be decomposed: it is one number covering VM
+# start, clone and compile together. This job separates them, on the same runner
+# class the consumers use, which is what makes the figure decidable.
+#
+# **Why a job and not a laptop.** #191's evaluation measured 455 ms bare, 730 ms
+# warm, 2300 ms cold on a developer machine. A runner is slower and `MIX_INSTALL_DIR`
+# is cold there every job, so the laptop's number is the wrong one to choose a
+# mechanism against. The bare-VM line is the control: without it `depdep.bootstrap`
+# reads as though VM start were depdep's cost.
+#
+# `allow_failure`, and no threshold asserted. This is an instrument, not a gate —
+# a number to read in the job log and record on #191. A pass/fail bound would be
+# asserting the speed of whatever runner picked up the job, which is precisely the
+# variance #191 and `Depdep.Metrics`'s moduledoc exist to warn about. What this
+# job does guard is that the measurement still RUNS: if `Mix.install` from this
+# repository stops working, the bootstrap probe is where it shows up first.
+bootstrap-cost:
+  stage: test
+  allow_failure: true
+  variables:
+    GIT_STRATEGY: clone
+  script:
+    # One block, because the measurement is one sequence and splitting it across
+    # YAML entries puts Elixir colons and braces where YAML reads structure.
+    #
+    # Not `mix` anything: this measures what a CONSUMER does, which is
+    # `Mix.install` and nothing else. Keep it that way.
+    - |
+      set -eu
+      mkdir -p /tmp/boot && cd /tmp/boot
+
+      cat > bare.exs <<'PROBE'
+      {wall_ms, _} = :erlang.statistics(:wall_clock)
+      IO.puts("bare_ms=#{wall_ms}")
+      PROBE
+
+      cat > install.exs <<'PROBE'
+      Mix.install([{:depdep, path: System.fetch_env!("DEPDEP_SRC")}])
+      {wall_ms, _} = :erlang.statistics(:wall_clock)
+      IO.puts("install_ms=#{wall_ms} loaded=#{Code.ensure_loaded?(Depdep)}")
+      IO.puts("what depdep itself would report: #{Depdep.Metrics.bootstrap_us()} us")
+      PROBE
+
+      # Three of each, because one sample of a duration is not a measurement —
+      # the same reason depdep.elapsed is a series rather than a line.
+      echo "=== bare VM, installs nothing (the floor, NOT depdep's cost) ==="
+      for i in 1 2 3; do elixir bare.exs; done
+
+      echo "=== cold: compile from source, a fresh install dir each time ==="
+      for i in 1 2 3; do
+        MIX_INSTALL_DIR=$(mktemp -d) DEPDEP_SRC="$CI_PROJECT_DIR" elixir install.exs
+      done
+
+      echo "=== warm: one install dir, reused — what persisting the cache buys ==="
+      WARM=$(mktemp -d)
+      for i in 1 2 3 4; do
+        MIX_INSTALL_DIR="$WARM" DEPDEP_SRC="$CI_PROJECT_DIR" elixir install.exs
+      done
+
+      # The network component, measured apart: `path:` above excludes it on
+      # purpose, so the compile is never conflated with the clone.
+      echo "=== the clone alone, over the network a consumer actually uses ==="
+      for i in 1 2; do
+        rm -rf /tmp/clone
+        start=$(date +%s%N)
+        # Tolerated, deliberately: this is the secondary figure, and a credential
+        # quirk here must not mask the three primary measurements above.
+        if git clone --quiet --depth 1 "$CI_REPOSITORY_URL" /tmp/clone; then
+          echo "clone_ms=$(( ($(date +%s%N) - start) / 1000000 ))"
+        else
+          echo "clone probe unavailable — the figures above stand"
+        fi
+      done
+
 # The claim #14 shipped without: that `apt-get install` USES a restored `.deb`
 # rather than re-fetching it. #41 recorded it as untakeable — "no MinIO was
 # reachable and the environment was not root" — which is false of this job: it

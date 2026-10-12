@@ -13,9 +13,9 @@ The bucket vocabulary these metrics report is defined in
 
 ## What a run measures {#metrics}
 
-`Depdep.Metrics.to_map/3` is the run's measurement, built from
+`Depdep.Metrics.to_map/4` is the run's measurement, built from
 `Depdep.Metrics.Phase` (one direction's work for one provider) and
-`Depdep.Metrics.Unit` (one unit's outcome). Two kinds of number.
+`Depdep.Metrics.Unit` (one unit's outcome). Three kinds of number.
 
 **Per run and per provider** — how long the run took and how much of the lock it
 settled: `Depdep.Metrics.bytes/1` for volume,
@@ -27,6 +27,14 @@ looking at.
 
 **Per unit** — one sample each for download, extraction, bytes, compile time and
 time saved.
+
+**And the bootstrap, which is neither.** A consumer fetches and compiles depdep
+before depdep can restore anything, so that cost is the one thing depdep cannot
+cache: it is what runs before the cache exists. **It is reported, separately from
+the transfer, and never folded into it** — the two answer different questions,
+and a single total would hide the only one of them a consumer can act on. A run
+that could not measure it reports nothing rather than zero, since zero would
+claim the bootstrap was free.
 
 `Depdep.Metrics.write/2` records them for a later push to find.
 

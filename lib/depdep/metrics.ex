@@ -92,6 +92,40 @@ defmodule Depdep.Metrics do
     defstruct [:provider, :direction, :span_us, :concurrency, tally: %{}, units: []]
   end
 
+  @doc """
+  Everything that happened before depdep's first line, in microseconds.
+
+  **The bootstrap depdep cannot cache, because it is what runs before the cache
+  exists.** A consumer job clones this repository and compiles it, per job, in
+  every pipeline — and `elapsed_us` deliberately excludes it, so until #194
+  nobody had the figure. #191 is open on whether it is worth optimising, and was
+  explicit that the mechanism gets chosen against a measurement rather than
+  ahead of one.
+
+  `Mix.install/2` runs INSIDE the already-started VM: it clones and compiles
+  depdep while the beam is up. So the VM's own clock has already measured this,
+  at no cost and with nothing to thread through the run — read it on the first
+  line of `Depdep.CLI.main/1`, which is where every consumer script enters
+  (`Depdep.CLI.main(System.argv())`). Measured against the process total:
+  2402 ms here against `/usr/bin/time`'s 2490 ms, the 88 ms gap being VM start
+  and exit.
+
+  **It includes VM start, which is not depdep's cost, and that is deliberate.**
+  Nothing inside the VM can see when `Mix.install` began, so the honest figure
+  is the one the clock actually holds, with the floor named rather than guessed
+  at: a bare `elixir` that installs nothing reads ~455 ms on this machine, and
+  CI measures the same floor on runner hardware so the attributable cost is
+  derivable rather than asserted. A figure that silently subtracted an assumed
+  constant would read as precision depdep does not have.
+
+  Monotonicity is not a concern here: `:wall_clock` counts from VM start and is
+  not the system clock, so it cannot step backwards over an NTP correction.
+  """
+  def bootstrap_us do
+    {wall_clock_ms, _since_last_call} = :erlang.statistics(:wall_clock)
+    wall_clock_ms * 1_000
+  end
+
   @doc "Download plus extract, for one unit."
   def unit_us(%Unit{download_us: d, restore_us: r}), do: d + r
 
@@ -138,10 +172,11 @@ defmodule Depdep.Metrics do
   Microseconds throughout, unrounded. `Depdep.Report.duration/1` rounds to
   0.1 s, which is right for a line someone reads and useless for a series.
   """
-  def to_map(phases, direction, elapsed_us) do
+  def to_map(phases, direction, elapsed_us, bootstrap_us \\ nil) do
     %{
       direction: direction,
       elapsed_us: elapsed_us,
+      bootstrap_us: bootstrap_us,
       saved_total_us: saved_total_us(phases),
       rebuilt_after_restore: Depdep.RestoreCheck.count(phases),
       phases: Enum.map(phases, &phase_map/1)

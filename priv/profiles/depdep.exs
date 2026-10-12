@@ -22,7 +22,7 @@
   "name" => "Depdep",
   "description" =>
     "What restoring compiled dependencies from a depdep store cost a CI job, and what it saved.",
-  "version" => 3,
+  "version" => 4,
   "guidance" => """
   One depdep run is one `--pull` or one `--push` in one job, and it posts two
   kinds of number. **Per run and per provider** — `depdep.elapsed`, `depdep.span`,
@@ -156,7 +156,19 @@
       "precision" => 1,
       "polarity" => "higher_worse",
       "description" =>
-        "The whole transfer, from the first provider to the last — what depdep itself cost the job. Excludes the Mix.install that bootstrapped it and any compile."
+        "The whole transfer, from the first provider to the last — what depdep itself cost the job. Excludes the Mix.install that bootstrapped depdep, which `depdep.bootstrap` carries, and any compile."
+    },
+    %{
+      "key" => "depdep.bootstrap",
+      "name" => "Bootstrap",
+      "group_name" => "Run",
+      "type" => "gauge",
+      "quantity" => "duration",
+      "unit" => "s",
+      "precision" => 1,
+      "polarity" => "higher_worse",
+      "description" =>
+        "Everything before depdep's first line: VM start plus the Mix.install that cloned and compiled depdep. The one cost depdep cannot cache, because it is what runs before the cache exists. Read against depdep.elapsed, which is the transfer; includes VM start (~0.5 s, not depdep's), so the floor is measured on the runner rather than subtracted as an assumed constant."
     },
     %{
       "key" => "depdep.rebuilt_after_restore",
@@ -451,6 +463,23 @@
                 %{"key" => "direction", "op" => "=", "value" => "pull"},
                 %{"key" => "bucket", "op" => "in", "value" => ["pulled", "present"]}
               ]
+            }
+          },
+          # The two halves of what depdep cost a job, which only read together.
+          # #191 asks whether the bootstrap is worth optimising; this is the panel
+          # that answers it, per consumer, from the runs themselves.
+          %{
+            "title" => "Bootstrap against transfer — what ran before depdep, and what depdep ran",
+            "viz" => "line",
+            "x" => 0,
+            "y" => 20,
+            "w" => 12,
+            "h" => 4,
+            "query" => %{
+              "v" => 1,
+              "metrics" => ["depdep.bootstrap", "depdep.elapsed"],
+              "aggregation" => "p95",
+              "group_by" => ["project"]
             }
           }
         ]

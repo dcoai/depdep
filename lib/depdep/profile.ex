@@ -130,7 +130,11 @@ defmodule Depdep.Profile do
       units: units
     }
 
-    Metrics.to_map([phase], direction, 200)
+    # The fourth argument matters here, and a `nil` would be wrong. This fixture
+    # is what `check/1` reads to decide which metrics the code EMITS, so a run
+    # that did not read the clock at entry would make `depdep.bootstrap` look
+    # like a metric the document invented (#194). Any non-nil figure does.
+    Metrics.to_map([phase], direction, 200, 300)
   end
 
   @doc """

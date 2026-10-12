@@ -331,6 +331,14 @@ between 126 s and 532 s on identical code. That is the point of the shape: a
 number can be read as a count of packages, and a total that does not add up is
 a bug worth reporting.
 
+**The bootstrap is measured too, separately.** That it is excluded here is not
+the same as it being unknown: `Mix.install` runs inside the already-started VM,
+so the VM's own clock has already timed it, and depdep reads that clock on its
+first line and reports it as `depdep.bootstrap` beside `depdep.elapsed`. The two
+are the halves of what depdep cost your job — what ran before it, and what it
+ran — and your metresis dashboard pairs them. Nothing in your script changes to
+get this; the clock was always there.
+
 - **`pulled N`** and **`already stored N`** are the win — a package this build
   did not have to compile.
 - **`missing N`** is a genuine miss: those inputs have no object yet, so Mix

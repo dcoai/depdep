@@ -12,12 +12,13 @@ and its loader states the contract: a version bump is how an update announces it
 The content hash excludes `"version"` itself. `Depdep.Profile.hash/0` — the one every
 ingest post carries — includes it, because the instance compares the whole document.
 
-**version 3** · content hash `cca7dadcb75966a4916d3801a6ddbb725de6f33848d0a94dd7727badcb4887a9`
+**version 4** · content hash `7c0ca2e6277133b65aa2c837305865f092af87a85fd8fd59788ea8222223c451`
 
-## metrics (14)
+## metrics (15)
 
 | key | unit | polarity |
 |---|---|---|
+| `depdep.bootstrap` | s | higher_worse |
 | `depdep.bytes` | B | neutral |
 | `depdep.bytes_total` | B | neutral |
 | `depdep.compile` | s | higher_worse |
@@ -41,8 +42,9 @@ ingest post carries — includes it, because the instance compares the whole doc
 
 `missing`, `not_built`, `not_for_env`, `present`, `pulled`, `skipped`, `stored`, `uploaded`
 
-## dashboard panels (9)
+## dashboard panels (10)
 
+- Bootstrap against transfer — what ran before depdep, and what depdep ran
 - By module: what compiling would cost, against what restoring did
 - Compile time per miss (p95)
 - Estimated vs actual — the run
