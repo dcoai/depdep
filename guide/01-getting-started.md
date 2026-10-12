@@ -170,7 +170,7 @@ Depdep runs *before* `mix deps.get`, so it cannot be a dependency in your
 `mix.exs` — that would be circular. Commit this as `scripts/depdep.exs`:
 
 ```elixir
-Mix.install([{:depdep, "~> 0.9"}])
+Mix.install([{:depdep, "~> 0.11"}])
 
 Depdep.CLI.main(System.argv())
 ```
@@ -178,7 +178,14 @@ Depdep.CLI.main(System.argv())
 `Mix.install/2` fetches into its own cache, independent of your project's
 `deps/`, so there is no ordering problem and no root Mix project required.
 
-**Until depdep is on hex.pm — and as of v0.9.0 it is not; publishing is a
+That cache lives under `MIX_INSTALL_DIR`, or `~/.cache/mix/installs` when it is
+unset, and **it is safe to persist between CI jobs** — it holds depdep itself,
+not your dependencies. Key it on the file that carries the pin rather than on
+your `mix.lock`: the pin is in your depdep script, so a `mix.lock`-keyed cache
+will keep serving an old depdep after a version bump. Nothing else depdep does
+depends on this, and skipping it costs a clone and a short compile per job.
+
+**Until depdep is on hex.pm — and as of v0.11.0 it is not; publishing is a
 separate decision from tagging — install it from git instead.** The git form
 also stays the way to run a commit that has no release yet:
 
@@ -192,7 +199,7 @@ url =
     token -> "https://gitlab-ci-token:#{token}@gitlab.example.com/group/depdep.git"
   end
 
-Mix.install([{:depdep, git: url, tag: "v0.9.0"}])
+Mix.install([{:depdep, git: url, tag: "v0.11.0"}])
 
 Depdep.CLI.main(System.argv())
 ```

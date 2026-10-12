@@ -90,7 +90,7 @@ depdep for itself:
 
 ```elixir
 # scripts/depdep.exs
-Mix.install([{:depdep, "~> 0.10"}])
+Mix.install([{:depdep, "~> 0.11"}])
 
 Depdep.CLI.main(System.argv())
 ```
@@ -224,12 +224,19 @@ dependencies to compile — an upper bound on what a first adoption can win, not
 what a warm pipeline sees. Treat the table as the expectation and the 28 minutes
 as the ceiling.
 
-**What a wrong judgement is currently costing.** `depdep.rebuilt_after_restore`,
-latest per consumer: bizex **219**, extc 12, visualize2 8, visualize 1, extla 1;
-metresis, uficap, exio and depdep 0. Each one is an object transferred and then
-recompiled anyway — waste, not breakage. v0.9.0 should reduce these once
-consumers pin it; #122, #110 and #133 stay open until a consumer's pipeline says
-by how much, and #123 is a second cause not yet addressed.
+**What a wrong judgement cost, and what fixing it recovered.**
+`depdep.rebuilt_after_restore`, per consumer as measured on 2026-09-28: bizex
+**219**, extc 12, visualize2 8, visualize 1, extla 1; metresis, uficap, exio and
+depdep 0. Each one is an object transferred and then recompiled anyway — waste,
+not breakage.
+
+**Those figures are the before.** The cause was found twice over: an object
+carries the pusher's `build_path` where the key carries none (v0.9.0), and a
+restored git dependency kept the pusher's `origin` (v0.10.0). As consumers pinned
+each fix the figures stepped down — bizex **219 → 9**, extc 12 → 0, visualize2
+8 → 0, extla 1 → 0 — which is what closed #122, #110, #133 and #123 on evidence
+rather than on argument. The numbers above are left as recorded; what changed is
+that they are now history.
 
 **Per-pull cost**, over the network: 1.3–1.6 s for 44 Debian packages, 3.2–4.2 s
 for ~50 compiled dependencies. A restored git mirror measured 2.43 s cold against

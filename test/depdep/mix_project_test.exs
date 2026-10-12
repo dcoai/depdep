@@ -74,6 +74,44 @@ defmodule Depdep.MixProjectTest do
     assert [_, ~s("~> ) <> _] = first_install
   end
 
+  # **An install snippet must name the version this build ships** (#192, for #190).
+  #
+  # The check above asserts the README's first install form is a hex requirement rather
+  # than a git ref (#76) — and says nothing about WHICH version, so `~> 0.1` passed. That
+  # is how the README came to say `~> 0.10` and the guide `~> 0.9` and `tag: "v0.9.0"`
+  # while the project shipped v0.11.0: a reader following the guide pinned a release the
+  # project had since fixed twice.
+  #
+  # Derived from @version, so a release bump fails here until the docs follow. A reminder
+  # does not work; the guard above proves it.
+  #
+  # **Install snippets only, never prose.** CHANGELOG.md names v0.9.0, v0.6.0 and every
+  # other release, and the README cites releases by number in its history. Those are
+  # records, and a guard that rewrote them to match the current version would be deleted
+  # by the first person a release annoyed — which is worse than no guard.
+  test "every install snippet in shipped markdown names this version" do
+    version = Mix.Project.config()[:version]
+    [major, minor, _patch] = String.split(version, ".")
+    requirement = ~s("~> #{major}.#{minor}")
+
+    for page <- shipped_markdown(), body = File.read!(page) do
+      for [snippet, spec] <- Regex.scan(~r/(Mix\.install\(\[\{:depdep, [^}]+\}\]\))/, body) do
+        cond do
+          String.contains?(spec, "~>") ->
+            assert String.contains?(spec, requirement),
+                   "#{page}: #{String.trim(snippet)} should require #{requirement}"
+
+          String.contains?(spec, "tag:") ->
+            assert String.contains?(spec, ~s(tag: "v#{version}")),
+                   "#{page}: #{String.trim(snippet)} should pin tag: \"v#{version}\""
+
+          true ->
+            :ok
+        end
+      end
+    end
+  end
+
   # Every markdown file the package ships appears on hexdocs beside the README, so
   # the same rule binds all of it. **The subjects are DERIVED from `package/0`,
   # not listed** (#185, for #184): this check named the README, then gained the
