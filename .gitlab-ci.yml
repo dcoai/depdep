@@ -509,13 +509,19 @@ exio:
   variables:
     # Reaches the service as well as the job, which is how the bootstrap sees it.
     # None of these is a secret: the store lives and dies with the pipeline, and a
-    # real credential here would be the thing #148 was about. The password has to
-    # clear exio's own rules (12+ characters, not the username, not a common one) or
-    # the bootstrap raises rather than quietly generating one.
-    EXIO_ADMIN_PASSWORD: "depdep-ci-throwaway-admin"
-    EXIO_ADMIN_API_TOKEN: "depdep-ci-throwaway-api-token"
+    # real credential here would be the thing #148 was about.
+    #
+    # **The token's shape is enforced and the bootstrap RAISES on a bad one** — it is
+    # `exio_` and exactly 43 base62 characters. A rejected value is not a warning: the
+    # service exits before it listens, and the only symptom in this job is the health
+    # check answering 000, which is how the first run of it failed.
+    #
+    # No EXIO_ADMIN_PASSWORD: nothing here logs in as the admin, so setting one only
+    # adds a second value the bootstrap can refuse. exio generates one and prints it
+    # to its own log, which is correct for a container deleted at the end of the job.
+    EXIO_ADMIN_API_TOKEN: "exio_DepdepCiThrowawayToken0123456789abcdefghijk"
     EXIO_ROOT_ACCESS_KEY_ID: "EXDEPDEPCI0000000001"
-    EXIO_ROOT_SECRET_ACCESS_KEY: "depdep-ci-throwaway-secret"
+    EXIO_ROOT_SECRET_ACCESS_KEY: "depdep-ci-throwaway-secret-0123456789abcdef"
     # The URL form, with the secret deliberately NOT in it: depdep refuses a store URL
     # carrying a password component, so it travels as DEPDEP_SECRET_KEY below.
     DEPDEP_STORE: "s3://EXDEPDEPCI0000000001@exio:9000/depdep-ci"
@@ -532,12 +538,28 @@ exio:
     - mix deps.get
     # Readiness on the console port, which answers only once the system database is
     # migrated and the bootstrap has run — so a 200 here means the root key exists.
+    #
+    # **Diagnosed, not just reported.** The first run of this job printed
+    # `exio health answers 000` and stopped, which says only that nothing was
+    # listening. A service container's own log is not in this job's output unless
+    # CI_DEBUG_SERVICES is set, so the likely cause belongs in the failure message.
     - |
       for _ in $(seq 1 90); do
         curl -fs -o /dev/null http://exio:4000/health && break
         sleep 1
       done
-      curl -s -o /dev/null -w 'exio health answers %{http_code}\n' http://exio:4000/health
+      if ! curl -fs -o /dev/null http://exio:4000/health; then
+        echo "exio never became ready on http://exio:4000/health after 90s."
+        echo
+        echo "The usual cause is a variable the bootstrap REFUSED: it raises rather"
+        echo "than falling back, so the service exits before it listens and the only"
+        echo "symptom here is no answer at all. Check EXIO_ADMIN_API_TOKEN is exio_"
+        echo "plus exactly 43 base62 characters, and that the pinned image still"
+        echo "boots. Re-run with CI_DEBUG_SERVICES=true for the service's own log,"
+        echo "which carries the raised message."
+        exit 1
+      fi
+      echo "exio ready: health answers 200, so the bootstrap ran and the root key exists"
     # The bucket. Checked rather than fired and forgotten: a silent failure here would
     # surface later as a confusing NoSuchBucket from depdep instead of a plain message.
     - |
