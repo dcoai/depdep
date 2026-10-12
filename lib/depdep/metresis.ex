@@ -149,7 +149,7 @@ defmodule Depdep.Metresis do
       [
         sample("depdep.elapsed", seconds(map.elapsed_us), %{}),
         sample("depdep.rebuilt_after_restore", map.rebuilt_after_restore, %{})
-      ] ++ saved_total(map)
+      ] ++ saved_total(map) ++ bootstrap(map)
 
     run ++ Enum.flat_map(map.phases, &phase_samples/1)
   end
@@ -158,6 +158,12 @@ defmodule Depdep.Metresis do
   # #66, or a push side without --compile-deps — and says nothing, not zero.
   defp saved_total(%{saved_total_us: nil}), do: []
   defp saved_total(%{saved_total_us: us}), do: [sample("depdep.saved_total", seconds(us), %{})]
+
+  # `nil` is a caller that did not read the clock at entry — `Depdep.Profile`'s
+  # sample fixture, or `to_map/3` — and says nothing, not zero. Zero would be a
+  # claim that the bootstrap was free, which is the opposite of #191's finding.
+  defp bootstrap(%{bootstrap_us: nil}), do: []
+  defp bootstrap(%{bootstrap_us: us}), do: [sample("depdep.bootstrap", seconds(us), %{})]
 
   defp phase_samples(phase) do
     provider = %{"provider" => phase.provider}

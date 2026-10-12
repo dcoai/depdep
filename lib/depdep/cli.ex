@@ -54,12 +54,18 @@ defmodule Depdep.CLI do
   def switches, do: @switches
 
   def main(argv) do
+    # **Read before anything else, because this is the only moment it is readable.**
+    # `Metrics.bootstrap_us/0` reads the VM's clock, which counts from VM start —
+    # so at depdep's first line it holds the bootstrap and nothing else, and by
+    # the time the run ends it holds the run too. There is no later chance (#194).
+    bootstrap_us = Metrics.bootstrap_us()
+
     with {:ok, opts} <- classify(parse(argv), :switch),
          :run <- disposition(opts),
          {:ok, providers} <-
            classify(Provider.resolve(Keyword.get_values(opts, :provider)), :switch),
          :ok <- classify(combination(opts, providers), :switch) do
-      run(providers, opts)
+      run(providers, Keyword.put(opts, :bootstrap_us, bootstrap_us))
     else
       :help ->
         IO.puts(usage())
@@ -364,7 +370,7 @@ defmodule Depdep.CLI do
         )
 
         write_metrics(opts, phases, direction, elapsed)
-        post_metrics(phases, direction, elapsed)
+        post_metrics(opts, phases, direction, elapsed)
 
         # After the summary and the metrics, never before: what the pull did is
         # still true and still worth recording when the fetch or the compile
@@ -578,7 +584,9 @@ defmodule Depdep.CLI do
         :ok
 
       path ->
-        case Metrics.write(path, Metrics.to_map(phases, direction, elapsed)) do
+        map = Metrics.to_map(phases, direction, elapsed, opts[:bootstrap_us])
+
+        case Metrics.write(path, map) do
           :ok -> :ok
           {:error, message} -> warn("could not write metrics — #{message}")
         end
@@ -750,8 +758,10 @@ defmodule Depdep.CLI do
   # Never fails the run, and never delays it by more than `Depdep.Metresis`'s own
   # timeout. The measurement is a by-product of work that already succeeded, so
   # it is the least entitled thing in the tool to change an exit code.
-  defp post_metrics(phases, direction, elapsed) do
-    case Metresis.post(Metrics.to_map(phases, direction, elapsed), direction) do
+  defp post_metrics(opts, phases, direction, elapsed) do
+    map = Metrics.to_map(phases, direction, elapsed, opts[:bootstrap_us])
+
+    case Metresis.post(map, direction) do
       :ok -> :ok
       :disabled -> :ok
       {:warn, message} -> warn(message <> " — the run is unaffected")
