@@ -99,6 +99,29 @@ surfex:
 # for a reason no commit can address, which is worse than an amber job.
 #
 # Flip `allow_failure` to false the day this job passes on main.
+#
+# **It did pass, once, on pipeline 5206 on main (2026-10-12): `cn2 holds what this
+# depdep ships`.** The condition above was briefly met and is recorded here because
+# it is the only time it has been. It has since gone red again for two reasons that
+# arrived within two hours of each other, and NEITHER is a commit here:
+#
+#   * **2 lines, the version** — `version 3 on cn2, 4 here` and `depdep.bootstrap`
+#     absent. metresis accepts a profile whose version is LOWER than the one it holds
+#     and overwrites it, so any consumer still on v0.11.0 (which ships profile v3)
+#     reverts the bump #194 made. Accepted as metresis#414. It is also why
+#     `depdep.bootstrap` samples are not reaching the dashboard.
+#   * **4 lines, the units** — `quantity "information"`/`unit "By"` on cn2 against
+#     `bytes`/`B` here, for `depdep.bytes` and `depdep.bytes_total`. **These are not
+#     disagreements.** metresis took visualize's UCUM codes (its #433) and migrated
+#     stored units in place; its §4.4 still reads `bytes`/`B` as a documented alias,
+#     on purpose, so this document is correct. But `GET /profiles/:key` renders the
+#     canonicalised row and withholds the hash it stores, so depdep cannot tell
+#     canonicalisation from disagreement. #200 (Research) and metresis#446.
+#
+# So: **six expected lines.** A SEVENTH, or a change to these, is new and worth
+# reading. Do not flip `allow_failure` until the count is zero — a red gate here
+# would block every unrelated change for a reason no commit in this repository can
+# address, which is the same argument as above and is now twice-proven.
 profile-instance-check:
   stage: test
   allow_failure: true
