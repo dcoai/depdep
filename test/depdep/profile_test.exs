@@ -44,12 +44,23 @@ defmodule Depdep.ProfileTest do
   # its only one. `#profile-task` has no other current verifier either; its other two
   # relations are retired.
   #
-  # **The list is not selectable by `mix test --only`, and nothing can make it so.**
-  # `ExUnit.Filters.has_tag/2` matches the tag term exactly or compares `to_string/1` of
-  # it, and `to_string/1` of a list of strings concatenates them — so neither id matches,
-  # where a single-string tag matches fine. Do not "fix" that by splitting this back into
-  # two `@tag` lines: that restores the silent drop this comment exists to record, and
-  # loses a relation the gate requires. Filed with surfex as dco-tek/surfex#190.
+  # **`mix test --only` cannot select this test by either id, and nothing can make it
+  # so.** `ExUnit.Filters.has_tag/2` matches the tag term exactly or compares
+  # `to_string/1` of it, and `to_string/1` of a list of strings concatenates them — so
+  # neither id matches, where a single-string tag matches fine. Do not "fix" that by
+  # splitting this back into two `@tag` lines: that restores the silent drop this comment
+  # exists to record, and loses a relation the gate requires.
+  #
+  # **Run it by unit with `mix surfex.test` instead** (surfex 0.7.1, #204):
+  #
+  #     mix surfex.test profile-holds-the-code
+  #     mix surfex.test "spec/09-cli.md#profile-task"
+  #
+  # Either id selects exactly this test. It reads the ids as surfex does and runs
+  # `mix test FILE:LINE`, which ExUnit's location filter selects exactly — so the cost of
+  # the list tag is now only that `--only` is the wrong command for it. Filed with surfex
+  # as dco-tek/surfex#190, answered by its #196 (`mix surfex.status` counts these tests:
+  # `unselectable by --only: 1 test`, and depdep's one is this one) and #200 (the task).
   @tag verifies: ["profile-holds-the-code", "spec/09-cli.md#profile-task"]
   test "the shipped document agrees with the code, both ways" do
     assert Profile.check() == :ok
