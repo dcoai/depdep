@@ -65,6 +65,8 @@ quietly-wrong number the variable exists to prevent.
 Requests are signed with AWS Signature v4, written out rather than taken from a
 library (`spec/01-goals-and-scope.md#zero-runtime-deps`).
 
+<!-- surfex: table s3-surface -->
+
 | Function | What it does |
 |---|---|
 | `Depdep.S3.head/2` | `:hit`, `:miss` or `{:error, reason}` — never a raise, so a flaky store degrades to a compile |

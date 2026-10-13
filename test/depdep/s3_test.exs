@@ -58,12 +58,70 @@ defmodule Depdep.S3Test do
     }
   end
 
+  defp tmp_path do
+    path = Path.join(System.tmp_dir!(), "s3-test-#{System.unique_integer([:positive])}")
+    on_exit(fn -> File.rm_rf!(path) end)
+    path
+  end
+
+  # Serves one object, sending the head and the body as separate writes. The
+  # separation is the point: concatenating them would allocate a second binary
+  # the size of the object inside the test, which is exactly what the streaming
+  # measurement in `get/3` is watching for.
+  defp serve_object(bytes) do
+    {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true, packet: :raw])
+    {:ok, port} = :inet.port(listen)
+
+    spawn_link(fn ->
+      {:ok, sock} = :gen_tcp.accept(listen)
+      {:ok, _request} = :gen_tcp.recv(sock, 0, 3000)
+      :gen_tcp.send(sock, "HTTP/1.1 200 OK\r\nContent-Length: #{byte_size(bytes)}\r\n\r\n")
+      :gen_tcp.send(sock, bytes)
+      :gen_tcp.close(sock)
+      :gen_tcp.close(listen)
+    end)
+
+    port
+  end
+
+  # Runs `fun` and returns `{its result, the most the BEAM's refc-binary memory
+  # grew while it ran}`. Sampled from another process: the memory a buffering
+  # implementation holds is garbage the moment the call returns, so a reading
+  # taken after it cannot see the peak.
+  defp peak_binary_growth(fun) do
+    :erlang.garbage_collect()
+    base = :erlang.memory(:binary)
+    parent = self()
+    sampler = spawn(fn -> sample(base) end)
+
+    result = fun.()
+    send(sampler, {:peak, parent})
+
+    peak =
+      receive do
+        {:peak, peak} -> peak
+      after
+        5000 -> flunk("the memory sampler never answered")
+      end
+
+    {result, peak - base}
+  end
+
+  defp sample(peak) do
+    receive do
+      {:peak, from} -> send(from, {:peak, peak})
+    after
+      2 -> sample(max(peak, :erlang.memory(:binary)))
+    end
+  end
+
   setup do
     S3.start()
     :ok
   end
 
   describe "put/3" do
+    @tag verifies: "spec/04-store-layout.md#s3-surface/Depdep.S3.put"
     test "streams the whole file with an exact content-length and no chunking" do
       # Larger than the 64 KiB read chunk, so the body genuinely spans several
       # calls to the body function rather than fitting in one.
@@ -85,6 +143,7 @@ defmodule Depdep.S3Test do
 
     # #66: what an object says about itself is a header, signed with the rest,
     # so it cannot be dropped in transit unnoticed.
+    @tag verifies: "spec/04-store-layout.md#s3-surface/Depdep.S3.put"
     test "metadata goes out as x-amz-meta headers, and is signed" do
       content = "the archive bytes"
       path = Path.join(System.tmp_dir!(), "depdep-meta-#{System.unique_integer([:positive])}")
@@ -117,6 +176,76 @@ defmodule Depdep.S3Test do
     end
   end
 
+  describe "get/3" do
+    @tag verifies: "spec/04-store-layout.md#s3-surface/Depdep.S3.get/3"
+    test "writes the object's exact bytes to the destination, and never the file on an error" do
+      {_agent, port} = Depdep.FakeStore.start(%{"v2/x/1/abc.tar.gz" => {"bytes", %{}}})
+      dest = tmp_path()
+
+      assert S3.get(config(port), "v2/x/1/abc.tar.gz", dest) == :ok
+      assert File.read!(dest) == "bytes"
+
+      # A miss, a bad status and an unreachable store each travel as
+      # `{:error, reason}` — `get/3` is on the restore path, where the caller
+      # degrades to a compile, so a raise here is the failure the row's sibling
+      # claim ("never a raise, so a flaky store degrades to a compile") forbids.
+      # None of the three may leave a destination file behind: a half-written or
+      # empty archive that a later run mistakes for a restored one is worse than
+      # no file at all.
+      absent = tmp_path()
+      assert S3.get(config(port), "v2/x/1/absent.tar.gz", absent) == {:error, "not found"}
+      refute File.exists?(absent)
+
+      failed = tmp_path()
+
+      assert S3.get(config(serve_status(503)), "v2/x/1/abc.tar.gz", failed) ==
+               {:error, "GET returned 503"}
+
+      refute File.exists?(failed)
+
+      unreachable = tmp_path()
+      assert {:error, _reason} = S3.get(config(1), "v2/x/1/abc.tar.gz", unreachable)
+      refute File.exists?(unreachable)
+    end
+
+    # **The measurement, not a call.** The row claims `get/3` "streams to a
+    # destination path, so a large object never sits in memory", and a test that
+    # only asserted the bytes arrive would pass just as well against an
+    # implementation that read the whole response into a binary and wrote it out
+    # — which is the implementation this claim exists to forbid. So the object's
+    # size is the assertion: 48 MiB is served, and the BEAM's binary memory is
+    # required never to grow by anything close to it while the transfer runs.
+    #
+    # Proven red before it was trusted, and it took two tries to prove the right
+    # thing. Replacing `stream:` with a plain GET first failed on the size
+    # assertion above instead — `request/8` runs the response through
+    # `to_string/1`, so a buffering `get/3` cannot even round-trip binary data —
+    # which left the memory assertion itself never reached. The mutation that
+    # tests it is `body_format: :binary` plus `File.write!(dest, body)`: the file
+    # is then written correctly and **peak binary growth goes from 3.0 MiB to
+    # 48 MiB**, the whole object. The bound below sits clear of both.
+    #
+    # The peak is sampled from another process because the memory is released as
+    # soon as `get/3` returns — a reading taken afterwards cannot see it.
+    @tag verifies: "spec/04-store-layout.md#s3-surface/Depdep.S3.get/3"
+    test "streams a large object rather than holding it in memory" do
+      bytes = :crypto.strong_rand_bytes(48 * 1024 * 1024)
+      port = serve_object(bytes)
+      dest = tmp_path()
+
+      {result, growth} =
+        peak_binary_growth(fn -> S3.get(config(port), "v2/x/1/big.tar.gz", dest) end)
+
+      assert result == :ok
+      assert File.stat!(dest).size == byte_size(bytes)
+
+      assert growth < 16 * 1024 * 1024,
+             "peak binary memory grew by #{div(growth, 1024 * 1024)} MiB transferring a " <>
+               "#{div(byte_size(bytes), 1024 * 1024)} MiB object: the response is being held " <>
+               "in memory rather than streamed to #{dest}"
+    end
+  end
+
   describe "concurrency/0" do
     test "is derived, and bounded at both ends" do
       assert S3.concurrency() >= 8
@@ -128,7 +257,20 @@ defmodule Depdep.S3Test do
     # depth per session, not a companion to `max_sessions`: raising it
     # serialises every transfer behind one socket (measured 2.13 s vs 0.09 s).
     # This test exists to stop that being "fixed" back.
+    #
+    # **httpc is put into the wrong state first, and `start/0` called from the
+    # test body, so that the assertions can fail.** `setup` calls `start/0`
+    # before every test here, so reading the options straight back would pass
+    # against a `start/0` that had been emptied out — a check that cannot fail,
+    # which is the defect this project has hit three times. The values restored
+    # below (2 and 5) are httpc's own defaults, which `start/0`'s measurement
+    # table records at 0.13 s against 0.09 s.
+    @tag verifies: "spec/04-store-layout.md#s3"
     test "httpc may open a session per transfer, and does not queue instead" do
+      :ok = :httpc.set_options(max_sessions: 2, max_keep_alive_length: 5)
+
+      assert S3.start() == :ok
+
       {:ok, options} = :httpc.get_options([:max_sessions, :max_keep_alive_length])
       assert options[:max_sessions] >= S3.concurrency()
       assert options[:max_keep_alive_length] <= 1
@@ -152,6 +294,7 @@ defmodule Depdep.S3Test do
     # IS that filename — so the key holds a literal `%`, which must reach the
     # server as `%25` or the server decodes it back to `:` and canonicalises
     # something the signature never covered.
+    @tag verifies: "spec/04-store-layout.md#s3"
     test "encodes a literal percent, so an apt epoch survives the round trip" do
       assert S3.encode_path("/b/cpp_4%3a12.2.0-3_amd64.deb") ==
                "/b/cpp_4%253a12.2.0-3_amd64.deb"
@@ -257,6 +400,7 @@ defmodule Depdep.S3Test do
   end
 
   describe "metadata/2" do
+    @tag verifies: "spec/04-store-layout.md#s3-surface/Depdep.S3.metadata/2"
     test "reads the object's x-amz-meta headers back from one HEAD" do
       {agent, port} =
         Depdep.FakeStore.start(%{"v2/x/1/abc.tar.gz" => {"bytes", %{"compile-us" => "42"}}})
@@ -274,6 +418,7 @@ defmodule Depdep.S3Test do
       assert S3.canonical_query([]) == ""
     end
 
+    @tag verifies: "spec/04-store-layout.md#s3"
     test "sorts by name" do
       assert S3.canonical_query([{"prefix", "v2/"}, {"list-type", "2"}]) =~
                ~r/^list-type=2&prefix=/
@@ -319,6 +464,7 @@ defmodule Depdep.S3Test do
       assert object.key == "v2/a&b.tar.gz"
     end
 
+    @tag verifies: "spec/04-store-layout.md#s3-surface/Depdep.S3.list"
     test "pages past a continuation token, and sends it on the next request" do
       token = "tok/en+1="
 
@@ -335,6 +481,7 @@ defmodule Depdep.S3Test do
       assert second =~ "continuation-token=tok%2Fen%2B1%3D"
     end
 
+    @tag verifies: "spec/04-store-layout.md#s3-surface/Depdep.S3.list"
     test "a prefix is passed through" do
       {port, await} = serve_sequence([listing([])])
       assert {:ok, []} = S3.list(config(port), "git/v1/")
@@ -356,7 +503,10 @@ defmodule Depdep.S3Test do
     # Depdep.Sweep.plan/3 dooms. The key is spelled with the CURRENT schema: it was `v2`,
     # which #166 retired, and a retired schema is a misleading example in the test for the
     # delete path (#170).
-    @tag verifies: "spec/08-reclamation.md#rails"
+    @tag verifies: [
+           "spec/08-reclamation.md#rails",
+           "spec/04-store-layout.md#s3-surface/Depdep.S3.delete/2"
+         ]
     test "removes one object" do
       {port, await} = serve_sequence([""])
       key = "#{Depdep.Key.schema()}/a.tar.gz"
@@ -392,7 +542,7 @@ defmodule Depdep.S3Test do
   # raise here would abort the run rather than fall back to building, which is
   # depdep's whole failure posture.
   describe "head/2" do
-    @tag verifies: "spec/04-store-layout.md#s3"
+    @tag verifies: "spec/04-store-layout.md#s3-surface/Depdep.S3.head/2"
     test "an object the store holds is :hit, one it lacks is :miss, by one HEAD each" do
       {agent, port} = Depdep.FakeStore.start(%{"v3/x/1/abc.tar.gz" => {"bytes", %{}}})
 
@@ -403,7 +553,7 @@ defmodule Depdep.S3Test do
       assert [{"HEAD", _, _}, {"HEAD", _, _}] = Depdep.FakeStore.requests(agent)
     end
 
-    @tag verifies: "spec/04-store-layout.md#s3"
+    @tag verifies: "spec/04-store-layout.md#s3-surface/Depdep.S3.head/2"
     test "any other status is an error naming it, and an unreachable store is one too" do
       assert S3.head(config(serve_status(503)), "v3/x/1/abc.tar.gz") ==
                {:error, "HEAD returned 503"}

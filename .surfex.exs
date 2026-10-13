@@ -29,13 +29,21 @@
 #
 # A correction to #112, not a deferral — see `spec/10-decisions.md#the-gate`.
 # Closing the triangle requires every section's verifying test to call every
-# function that section cites. `spec/04-store-layout.md#s3` cites twelve;
-# `spec/02-architecture.md` is a map whose sections describe module groupings no
-# single test can meaningfully verify. Setting `:fail` would demand hollow tests
-# or the dismantling of the map, and hollow tests are how a gate teaches people
-# to confirm without reading — the failure `guides/writing-specs.md` §2 exists to
-# prevent. The triangle is reported in every run instead, and closing a gap where
-# it is genuinely closeable is ordinary work.
+# function that section cites. `spec/02-architecture.md` is a map whose sections
+# describe module groupings no single test can meaningfully verify. Setting
+# `:fail` would demand hollow tests or the dismantling of the map, and hollow
+# tests are how a gate teaches people to confirm without reading — the failure
+# `guides/writing-specs.md` §2 exists to prevent. The triangle is reported in
+# every run instead, and closing a gap where it is genuinely closeable is
+# ordinary work.
+#
+# This paragraph also cited `spec/04-store-layout.md#s3` and its twelve
+# functions. **That example was answered by #178 and is withdrawn**: `#s3`
+# states six of those claims as a MARKED TABLE, whose rows are spec units, so
+# each row owns its own code and the tests already written one `describe` per
+# function verify them — six gaps to none, with no test written to call a
+# function. What the example really showed was a section at the wrong grain, not
+# a gate asking too much. The map is still the genuine case.
 # ## Adoption (#129)
 #
 # `:trust` takes the suite as it stands, once. surfex 0.5 validates an
@@ -54,10 +62,11 @@
 # unvalidated relations are one fact under two names, and gating on it would
 # demand hollow tests. See `spec/10-decisions.md#the-gate`.
 #
-# The pair was 110 and 177 when #129 wrote this. It reads 57 and 62 on 2026-10-12, which
+# The pair was 110 and 177 when #129 wrote this. It reads 49 and 48 on 2026-10-13, which
 # is the same fact shrinking, not the argument weakening — #173's reduction pass took the
-# gaps from 83 to 75 and surfex 0.7.0 took them to 57 by measuring better (#199). Take
-# both numbers from `mix surfex.status`; this comment is not where they live.
+# gaps from 83 to 75, surfex 0.7.0 took them to 57 by measuring better (#199), 0.7.1 to 55
+# (#204), and #178 re-grained one section to 49. Take both numbers from
+# `mix surfex.status`; this comment is not where they live.
 # ## Excusals (#137)
 #
 # `classes`/`rules` get their first use, and #120 was wrong to report them
@@ -127,10 +136,10 @@
   # section at all.
   #
   # That subset is now clear: no section with implementing code lacks a verifier.
-  # `triangle: :fail` still cannot be turned on. **57 gaps remain as of 2026-10-12**, 48 of
+  # `triangle: :fail` still cannot be turned on. **49 gaps remain as of 2026-10-13**, 40 of
   # the form "implements it but no verifying test CALLS it" and 9 "verifies it but calls
-  # none of its code", in six of eleven spec files — `00`, `01`, `02`, `09` and `10` are at
-  # zero. Closing the rest is its own effort (#160).
+  # none of its code", in five of eleven spec files — `00`, `01`, `02`, `04`, `09` and `10`
+  # are at zero. Closing the rest is its own effort (#160).
   #
   # It read 105/90/14 when #159 wrote this. Two things moved it, and neither was a test
   # written to satisfy the gate: #173's reduction pass retired four module-level relations
@@ -139,6 +148,18 @@
   # second closed 18 gaps while depdep's own code and tests stood still, so a figure in
   # this comment can go stale without anybody touching the project — read
   # `mix surfex.status`, and treat a number written here as dated the day it was written.
+  # Then 0.7.1 took 57 to 55 (#204), and #178 took 55 to 49 by moving one section to
+  # CLAIM GRAIN rather than by writing tests: `spec/04-store-layout.md#s3`'s function
+  # table is marked `<!-- surfex: table s3-surface -->`, so each row is a unit owning its
+  # own code, and `s3_test.exs`'s per-function `describe`s verify them one row at a time.
+  #
+  # **That is the pattern to reach for first in #174-#179.** A marked table's rows have
+  # been units since surfex 0.7.0 and `implements` takes any spec record as its spec end,
+  # so a section that already states its claims as a table needs neither surfex#205 (claim
+  # forms, for prose claims) nor surfex#209 (the bulk migration aid). What it does cost is
+  # measured: marking the table re-versioned `#s3` and dangled all FOURTEEN of its
+  # relations at once, which is the re-review wave surfex#209's dangle-width report exists
+  # to predict. Eight were being re-homed anyway; the other six took a judgement each.
   #
   # `section: [:verifies]` is NOT the encoding, and the reason is worth recording so
   # nobody tries it again: 76 sections would fail it, because depdep's convention is
