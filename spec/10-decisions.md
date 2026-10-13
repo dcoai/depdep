@@ -147,8 +147,12 @@ original claim** (#199). surfex 0.7.0 began crediting a test for code its scan r
 and for code it reaches through an entry point, and **18 gaps closed with no change to this
 project's spec, code or tests** — 75 to 57. Two of them were in `#s3`, one of the sections
 the pass counted as narration. So some of the 65 were not narration at all; they were the
-tool unable to see a test reach the function through a helper. Which, and how many, is
-#160's measurement to redo. The diagnosis above stands — narration is real and the three
+tool unable to see a test reach the function through a helper. #160's re-measurement
+put narration at **at most the 20 gaps reachable only through the CLI — about 42% of
+48, against a recorded 78% of 83** — with 17 a limit of the tool's reach (surfex#197)
+and 11 a question of which test carries the tag. #178 then found `#s3` was not
+narration in any part: its claims were a table all along, one per row, and its gaps
+were section-grain accounting. The diagnosis above stands — narration is real and the three
 rules below are the answer to it — but it was argued from a number that was partly
 measuring something else.
 
@@ -198,6 +202,19 @@ either hollow tests or the dismantling of the architecture map — and hollow te
 are how a gate teaches people to confirm without reading, which is the failure
 `guides/writing-specs.md` §2 exists to prevent.
 
+**One of those two examples has since been answered, and what was wrong was the
+section's grain rather than the gate** (#178, 2026-10-13). `#s3` did cite twelve
+functions, and one test calling all twelve would indeed have been hollow — but it
+states six of their claims as a **table**, and a marked table's rows are spec units,
+so each row owns its own code and is verified by the tests `s3_test.exs` already
+holds, one `describe` per function. The section went from six gaps to none with no
+test written to call a function. The one claim that stayed behind, `start/0`'s, is
+prose rather than a row, and it got a test that can actually fail: the old one read
+back what `setup` had already set, so it would have passed against a `start/0`
+emptied out. The honest form of the argument above is narrower — closing the triangle
+demands hollow tests only where a section states one claim about many functions **and
+cannot be re-grained**. `spec/02-architecture.md` is still exactly that.
+
 The triangle is therefore **reported, not gated**. The gaps are visible in every
 `mix surfex.status` — 110 when #120 decided this, 57 on 2026-10-12 — and closing one where
 it is genuinely closeable is ordinary work.
@@ -208,7 +225,8 @@ failed, then passed against the code — and refuses to let one be asserted by h
 Carrying `implements` through a test requires that test to verify the section
 *and* call the implementing code, which is the triangle. So depdep's `implements`
 relations report as `unvalidated:`, which is the same gaps counted per relation instead of
-per section. #129 read 177 against 110; 2026-10-12 reads 62 against 57. The two numbers
+per section. #129 read 177 against 110; 2026-10-12 reads 62 against 57; 2026-10-13 reads
+**48 against 49**, after #204 took surfex 0.7.1 and #178 re-grained `#s3`. The two numbers
 move together because they are one fact, which is the point.
 
 `adoption: :trust` and a one-shot `mix surfex.baseline` record *why* the suite is

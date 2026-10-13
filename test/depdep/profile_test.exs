@@ -59,8 +59,13 @@ defmodule Depdep.ProfileTest do
   # Either id selects exactly this test. It reads the ids as surfex does and runs
   # `mix test FILE:LINE`, which ExUnit's location filter selects exactly — so the cost of
   # the list tag is now only that `--only` is the wrong command for it. Filed with surfex
-  # as dco-tek/surfex#190, answered by its #196 (`mix surfex.status` counts these tests:
-  # `unselectable by --only: 1 test`, and depdep's one is this one) and #200 (the task).
+  # as dco-tek/surfex#190, answered by its #196 (`mix surfex.status` counts these tests in
+  # one line, `unselectable by --only: N tests`) and #200 (the task).
+  #
+  # depdep has **two** such tests since #178: this one, and `S3Test: delete/2: removes one
+  # object`, which verifies both `spec/08-reclamation.md#rails` and the `#s3` table row for
+  # `delete/2`. Two requirements, one test, so a list is the honest tag — and the count is
+  # what it costs. Take the number from `mix surfex.status`, not from this comment.
   @tag verifies: ["profile-holds-the-code", "spec/09-cli.md#profile-task"]
   test "the shipped document agrees with the code, both ways" do
     assert Profile.check() == :ok
