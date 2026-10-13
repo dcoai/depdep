@@ -21,7 +21,12 @@ erl_crash.dump
 # `files` list meant it never shipped to hex, and the shipped-file guard in
 # `mix_project_test.exs` only checks that LISTED files exist, so nothing
 # noticed an extra tracked one. These patterns are what would have.
-#*#
-.#*
+#
+# `#` opens a COMMENT in a .gitignore, so the pattern for the artifact that
+# actually caused this has to be escaped — `#*#` is a comment and silently
+# matches nothing. Caught by probing the rules with a real file rather than
+# trusting them, which is the only way this class of mistake surfaces.
+\#*#
+.\#*
 *~
 *.swp
