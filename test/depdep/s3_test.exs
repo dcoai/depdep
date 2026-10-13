@@ -367,4 +367,51 @@ defmodule Depdep.S3Test do
       assert line == "DELETE /bucket/#{key} HTTP/1.1"
     end
   end
+
+  # `Depdep.FakeStore` answers 200 or 404 and nothing else, but `head/2`'s third
+  # branch is the one an operator meets when a store misbehaves. One socket that
+  # answers a chosen status, in the shape of `serve_sequence/1` above.
+  defp serve_status(status) do
+    {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true, packet: :raw])
+    {:ok, port} = :inet.port(listen)
+
+    spawn_link(fn ->
+      {:ok, sock} = :gen_tcp.accept(listen)
+      {:ok, _request} = :gen_tcp.recv(sock, 0, 3000)
+      :gen_tcp.send(sock, "HTTP/1.1 #{status} Oh No\r\nContent-Length: 0\r\n\r\n")
+      :gen_tcp.close(sock)
+      :gen_tcp.close(listen)
+    end)
+
+    port
+  end
+
+  # `spec/04-store-layout.md#s3` states this contract in one line: ":hit, :miss or
+  # {:error, reason} — never a raise, so a flaky store degrades to a compile". The
+  # last clause is the one that matters and nothing checked it (#201, for #160): a
+  # raise here would abort the run rather than fall back to building, which is
+  # depdep's whole failure posture.
+  describe "head/2" do
+    @tag verifies: "spec/04-store-layout.md#s3"
+    test "an object the store holds is :hit, one it lacks is :miss, by one HEAD each" do
+      {agent, port} = Depdep.FakeStore.start(%{"v3/x/1/abc.tar.gz" => {"bytes", %{}}})
+
+      assert S3.head(config(port), "v3/x/1/abc.tar.gz") == :hit
+      assert S3.head(config(port), "v3/x/1/absent.tar.gz") == :miss
+
+      # A HEAD, never a GET: asking whether an object exists must not pull its body.
+      assert [{"HEAD", _, _}, {"HEAD", _, _}] = Depdep.FakeStore.requests(agent)
+    end
+
+    @tag verifies: "spec/04-store-layout.md#s3"
+    test "any other status is an error naming it, and an unreachable store is one too" do
+      assert S3.head(config(serve_status(503)), "v3/x/1/abc.tar.gz") ==
+               {:error, "HEAD returned 503"}
+
+      # Nothing listening at all. The transport failure has to travel as
+      # `{:error, reason}` for the caller to degrade to a compile; a raise here is
+      # the failure the spec's "never a raise" forbids.
+      assert {:error, _reason} = S3.head(config(1), "v3/x/1/abc.tar.gz")
+    end
+  end
 end

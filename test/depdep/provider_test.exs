@@ -29,4 +29,24 @@ defmodule Depdep.ProviderTest do
     assert reason =~ "mix"
     assert reason =~ "apt"
   end
+
+  # `name/1` is `resolve/1` read backwards, and the pair is what puts a provider's
+  # name into a report line and into a root's path — so the two have to agree about
+  # every provider, not just the ones a caller happens to try (#201, for #160).
+  #
+  # The ROUND TRIP rather than `name(Provider.Mix) == "mix"`: a literal pair just
+  # restates the module's own table, and would still pass if a provider were added
+  # to one direction only, which is the way this breaks.
+  @tag verifies: "spec/05-units-and-providers.md#contract"
+  test "every provider name survives a round trip through resolve and back" do
+    names = Provider.known() |> String.split(", ")
+
+    assert names != [], "known/0 lists no providers, so this test would check nothing"
+    assert Provider.default() -- names == [], "the default names a provider known/0 omits"
+
+    for name <- names do
+      assert {:ok, [module]} = Provider.resolve([name])
+      assert Provider.name(module) == name
+    end
+  end
 end
