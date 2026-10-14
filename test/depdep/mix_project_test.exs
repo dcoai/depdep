@@ -65,10 +65,37 @@ defmodule Depdep.MixProjectTest do
   # The README is the package's front page on hexdocs. A reader there has no
   # dco-tek credential, so nothing in it may point at the private host, and the
   # first install form has to be the one that works from hex (#76).
-  test "the README is written for a reader outside the private network" do
+  # **The rule is about what a reader must be able to REACH, not every mention of a
+  # private host** (#217). `@source_url` is published twice over — Hex renders it as the
+  # package's `Source` link, and ExDoc builds every per-function source link from it — so
+  # a private address there is a 404 for everyone off this network. That shipped for
+  # several releases while this test passed, because it read `README.md` and nothing else.
+  #
+  # Derived from `project/0` and `package/0`, so a link added later cannot escape it. Same
+  # correction as #185 (the shipped-file guard derived from `package/0`) and #192 (install
+  # snippets derived from `@version`): replace a reminder with a derivation.
+  #
+  # **Prose is deliberately not covered.** `CHANGELOG.md` and `lib/depdep/profile.ex` each
+  # name `cn2` in a record of what a metrics instance held. Those are records, not
+  # instructions, and they hand nobody a link to fail on — the same argument #192 wrote
+  # down for release numbers in prose, which a guard must not rewrite.
+  test "nothing a reader outside the private network must reach names it" do
+    private = ["conet.yarina.org", "dco-tek"]
+
     readme = File.read!("README.md")
-    refute readme =~ "conet.yarina.org"
-    refute readme =~ "dco-tek"
+    for host <- private, do: refute(readme =~ host, "README.md names #{host}")
+
+    config = Mix.Project.config()
+
+    for host <- private do
+      refute config[:source_url] =~ host,
+             "source_url names #{host} — Hex publishes it as the package's Source link " <>
+               "and ExDoc builds every source link from it (#217)"
+    end
+
+    for {name, url} <- config[:package][:links], host <- private do
+      refute url =~ host, "package link #{inspect(name)} names #{host} (#217)"
+    end
 
     [first_install | _] = Regex.scan(~r/Mix\.install\(\[\{:depdep, ([^}]+)\}\]\)/, readme)
     assert [_, ~s("~> ) <> _] = first_install
