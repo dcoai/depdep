@@ -170,7 +170,7 @@ Depdep runs *before* `mix deps.get`, so it cannot be a dependency in your
 `mix.exs` — that would be circular. Commit this as `scripts/depdep.exs`:
 
 ```elixir
-Mix.install([{:depdep, "~> 0.11"}])
+Mix.install([{:depdep, "~> 0.12"}])
 
 Depdep.CLI.main(System.argv())
 ```
@@ -199,7 +199,7 @@ url =
     token -> "https://gitlab-ci-token:#{token}@gitlab.example.com/group/depdep.git"
   end
 
-Mix.install([{:depdep, git: url, tag: "v0.11.0"}])
+Mix.install([{:depdep, git: url, tag: "v0.12.0"}])
 
 Depdep.CLI.main(System.argv())
 ```
