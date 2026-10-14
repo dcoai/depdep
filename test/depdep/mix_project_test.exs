@@ -282,46 +282,44 @@ defmodule Depdep.MixProjectTest do
     end
   end
 
-  # #202. A `@tag verifies:` is a DECLARATION; the relation in the log is what the
-  # triangle counts. The two can disagree, and only one direction is reported:
-  # surfex fails on a relation whose test no longer declares it ("Undeclared"), and
-  # on a tag naming no spec unit ("Broken"), but says nothing about a tag naming a
-  # real unit with no relation. Two of #194's five tagged tests were inert that way
-  # for a day, and `require:` cannot express the rule — its keys are a kind or a
-  # spec role, so the nearest legal policy, `require: [test: [:verifies]]`, would
-  # demand that all 529 tests verify a spec unit.
+  # #202/#216. A `@tag verifies:` is a DECLARATION; the relation in the log is what
+  # the triangle counts, and the two can disagree. Until surfex 0.9.0 only one
+  # direction was reported, so the rule lived here as a shell line in the `surfex`
+  # job — `mix surfex.suggest` piped through `grep -q '^verifies'` — and THIS test
+  # guarded that line. 0.9.0 reports both directions itself (**Unrecorded**: a tag
+  # naming a real unit with no relation, AND a tag left on a relation someone
+  # retired), which is dco-tek/surfex#203, filed from here. Both the shell line and
+  # the assertions that pinned its spelling are gone.
   #
-  # So the check is a line in the `surfex` job: `mix surfex.suggest` must offer no
-  # `verifies` relation, since surfex leaves out pairs already related in any state.
-  # THIS test guards the line itself. The check cannot run inside `mix test` — a
-  # nested `mix` contends for the build lock — so without this, deleting it from CI
-  # would be invisible until a tag went unrecorded again. Same reason as #124's and
-  # #148's CI-shape tests above: a CI-only invariant needs an assertion a developer
-  # can break at their desk.
-  #
-  # Filed with surfex as dco-tek/surfex#203; delete both when it reports the state.
-  test "the surfex job still fails on a declaration with no recorded relation" do
+  # What remains worth guarding is the line that now carries the rule. `mix
+  # surfex.status` is the whole gate — relations, Unrecorded, Broken, Undeclared,
+  # Triangle — and nothing else in this suite asserts the job runs it. The check
+  # cannot run inside `mix test`, because a nested `mix` contends for the build
+  # lock, so without an assertion here, dropping it from CI would be invisible
+  # until a relation went wrong. Same reason as #124's and #148's CI-shape tests
+  # above: a CI-only invariant needs an assertion a developer can break at their
+  # desk.
+  test "the surfex job still runs the gate that reports an unrecorded declaration" do
     ci = File.read!(".gitlab-ci.yml")
 
     [_, job] = String.split(ci, ~r/^surfex:$/m, parts: 2)
     job = job |> String.split(~r/^[a-z][a-z0-9-]*:$/m) |> hd()
 
-    assert job =~ "mix surfex.suggest",
-           "the surfex job no longer runs `mix surfex.suggest`, so a `@tag verifies:` " <>
-             "with no relation in the log is silent again (#202)"
+    assert job =~ ~r/^\s*- mix surfex\.status\s*$/m,
+           "the surfex job no longer runs `mix surfex.status`, so NOTHING checks the " <>
+             "relation log — a `@tag verifies:` with no relation, a tag on a retired " <>
+             "relation, a dangling relation and a broken chain all go silent (#216)"
 
-    assert job =~ ~r/grep -q '\^verifies'/,
-           "the surfex job runs `mix surfex.suggest` but no longer acts on its " <>
-             "`verifies` lines (#202). It must fail the job, not just print."
+    assert job =~ ~r/^\s*- mix surfex\.log --verify\s*$/m,
+           "the surfex job no longer verifies the log chain, so an edited line or a " <>
+             "bad merge resolution is silent (#216)"
 
-    assert job =~ "exit 1",
-           "the guard reports a declaration with no relation without failing (#202)"
-
-    # Only `verifies`. The same command offers `tests` relations surfex derives from
-    # call tracing, which this project does not accept unread — a guard widened to
-    # every suggestion would demand exactly that bulk accept.
-    refute job =~ ~r/grep -q '\^tests'/,
-           "the guard must not act on suggested `tests` relations (#202)"
+    # The gate must be the job's own failure, not an advisory print. `allow_failure`
+    # on this job would make every check above it decorative — the exact shape
+    # #208 is about on the evidence side.
+    refute job =~ ~r/allow_failure:\s*true/,
+           "the surfex job allows failure, so the relation gate reports without " <>
+             "holding anything (#216)"
   end
 
   # The tarball is the package: build it and read back what it holds, so a

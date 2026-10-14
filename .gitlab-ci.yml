@@ -86,34 +86,22 @@ surfex:
     # The log is an append-only chain. This catches an edited line, a missing
     # parent, or a chain broken by a bad merge resolution.
     - mix surfex.log --verify
-    # **Every `@tag verifies:` in the suite must be a relation the log holds** (#202,
-    # for #205). A tag is a DECLARATION; the relation is what the triangle counts. A
-    # test could carry the tag and have no relation, and nothing failed: `require:`
-    # covers code → section and hint → test, not this direction, and the one signal
-    # (`mix surfex.status`'s "New") buries it among ~100 sections that legitimately
-    # relate to nothing. Two of #194's five tests were inert that way for a day.
+    # Every `@tag verifies:` in the suite must be a relation the log holds (#202, for
+    # #205). A tag is a DECLARATION; the relation is what the triangle counts, so a
+    # test could carry the tag and have no relation with nothing failing.
     #
-    # `mix surfex.suggest` is the check because it is surfex's own scanner pairing
-    # each test with the unit its tag names, and it leaves out pairs already related
-    # **in any state** — so a relation someone RETIRED on purpose is not suggested and
-    # this cannot push anyone to re-record it (measured on #202 before relying on it).
-    # It writes nothing without `--accept`.
+    # This was a nine-line shell check here until surfex 0.9.0: `mix surfex.suggest`
+    # piped through `grep '^verifies'`, which had to be empty. The block's own
+    # comment named its end — "Delete this block the day surfex reports the state
+    # itself — asked for as dco-tek/surfex#203" — and 0.9.0 is that day. `mix
+    # surfex.status` now fails on it directly, under **Unrecorded**, and it also
+    # catches the case the shell check explicitly could NOT: a tag left behind on a
+    # relation someone RETIRED on purpose. depdep had exactly one of those, silent
+    # since #132 (`member_once_test.exs`), which is what the upgrade surfaced (#216).
     #
-    # Only `verifies` lines. The 42 suggested `tests` relations are deliberately
-    # unaccepted — surfex derives those from call tracing, and accepting them in bulk
-    # is how three false relations were recorded once, in October 2026.
-    #
-    # What this does NOT catch: a tag left behind on a retired relation, which stays
-    # silent by the same rule that makes the retired case safe. Delete this block the
-    # day surfex reports the state itself — asked for as dco-tek/surfex#203.
-    - |
-      mix surfex.suggest > /tmp/surfex-suggest.txt
-      if grep -q '^verifies' /tmp/surfex-suggest.txt; then
-        echo "A test declares a spec unit the log has no relation for (#202):"
-        grep '^verifies' /tmp/surfex-suggest.txt
-        echo "Record each one: mix surfex.relate --type verifies, then mix surfex.validate — one call per relation, own note."
-        exit 1
-      fi
+    # Both halves were proven red before this block was removed: a tag naming a unit
+    # with no relation, and the retired case found in the suite. Naming a unit that
+    # does not exist is a different check (**Broken**), which is not this one.
 
 # What the instance actually holds, against what this depdep ships (#103).
 #
