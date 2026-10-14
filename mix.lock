@@ -1,3 +1,3 @@
 %{
-  "surfex": {:hex, :surfex, "0.8.0", "894280e7bfa7bc59cff2b58a6477d242c9c6df1cec4dfae3bbcd3aa17fc1c469", [:mix], [], "hexpm", "d1f995e508e1c87551ebb873e8791cb286eaa77a9bf82fbd41d41559c588e551"},
+  "surfex": {:hex, :surfex, "0.9.0", "6cbc1005e00b296ce6d4b40a8025d9fb5579f3382e50197560aa244e2519b66b", [:mix], [], "hexpm", "bb5c6bceda7037640fc9e27794b6bf5b98e16c6b932917dd1a97e6b22038a903"},
 }

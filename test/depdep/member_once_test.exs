@@ -80,7 +80,13 @@ defmodule Depdep.MemberOnceTest do
            "depdep recompiled a mix.exs Mix had already loaded:\n" <> output
   end
 
-  @tag verifies: "mix-exs-compiles-once-per-run"
+  # No `verifies:` tag, deliberately. #132 retired this relation in favour of the
+  # two the unit still carries — the observable outcome (no redefining warning) and
+  # the narrowest mechanism (the memo round trip) — and removed the sibling tag on
+  # `ask/3 runs the function inside the member's own project` to match. This one was
+  # missed, and stayed silent until surfex 0.9.0 reported a tag on a retired
+  # relation (dco-tek/surfex#203). The test is a good one and still runs; it is just
+  # not what the log records as verifying the unit.
   test "the root's converge records Mix's own app name for the member", ctx do
     Deps.converged(ctx.root, :test)
 
