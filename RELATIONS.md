@@ -1904,7 +1904,7 @@ A row per relation. **dangling**: an end changed since it was confirmed (`mix su
 | `test Depdep.MixProjectTest: mix docs without the escript names the install command` |
 | `test Depdep.MixProjectTest: mix hex.build ships lib, priv, the profile and the metadata files, and nothing else` |
 | `test Depdep.MixProjectTest: no shipped markdown points at the private host or group` |
-| `test Depdep.MixProjectTest: the README is written for a reader outside the private network` |
+| `test Depdep.MixProjectTest: nothing a reader outside the private network must reach names it` |
 | `test Depdep.MixProjectTest: the built package declares no dependencies to hex` |
 | `test Depdep.MixProjectTest: the package is MIT, links its source, and lists its files explicitly` |
 | `test Depdep.MixProjectTest: the surfex job still runs the gate that reports an unrecorded declaration` |

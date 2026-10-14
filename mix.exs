@@ -5,7 +5,7 @@ defmodule Depdep.MixProject do
   # tag and this disagree, and they did for two releases before being collapsed
   # back to one — see #40.
   @version "0.12.0"
-  @source_url "https://gitlab.conet.yarina.org/dco-tek/depdep"
+  @source_url "https://github.com/dcoai/depdep"
 
   def project do
     [
