@@ -4,6 +4,54 @@ What changed for a user of depdep, per release. Each version is a git tag;
 the four earliest also carry GitLab release notes, from which these entries
 are condensed. Issue numbers are this project's.
 
+## v0.12.0 — 2026-10-14
+
+**No refill, no re-push:** keys are unchanged and the schema stays `v3`, so every object
+already in a store stays usable and nothing recompiles because of this release.
+
+**The metrics profile is now version 4.** A consumer posting to a metresis instance sends
+the new document on its next post that meets a 428; the instance then holds one new metric
+and one new panel. Nothing a consumer does changes.
+
+### Added
+
+**`depdep.bootstrap` — what a consumer pays before depdep can help it** (#194, for #191).
+Every consumer job clones this repository and compiles it before depdep can restore
+anything: the one cost depdep cannot cache, because it is what runs before the cache
+exists. `depdep.elapsed` deliberately excludes it, so until now nobody had the figure, and
+#191 was explicit that an optimisation gets chosen against a measurement rather than ahead
+of one.
+
+`Mix.install/2` runs inside the already-started VM, so the VM's own clock has already
+measured this at no cost. `Depdep.Metrics.bootstrap_us/0` reads it on the **first line** of
+`Depdep.CLI.main/1` — the only moment it is readable, since by the end of the run the same
+clock holds the run as well.
+
+Measured here at 2402 ms against `/usr/bin/time`'s 2490 ms, the 88 ms gap being VM start
+and exit. **The figure includes VM start, which is not depdep's cost, and that is
+deliberate:** nothing inside the VM can see when `Mix.install` began, so the honest number
+is the one the clock holds, with the floor named rather than assumed — a bare `elixir` that
+installs nothing reads about 455 ms here, and CI measures the same floor on runner hardware
+so the attributable cost is derivable instead of asserted. A figure that silently subtracted
+a constant would read as precision depdep does not have.
+
+The profile gains the metric and a panel pairing it with `depdep.elapsed`, which is the
+comparison #191 needs. A caller that did not read the clock at entry sends **nothing** for
+it rather than zero — zero would claim the bootstrap was free, which is the opposite of what
+was measured.
+
+### Changed
+
+`Depdep.Metrics.to_map/3` takes an optional fourth argument, the bootstrap in microseconds,
+defaulting to `nil`. Existing callers are unaffected.
+
+`depdep.elapsed`'s description now says where the bootstrap went, instead of only that it is
+excluded.
+
+The shipped README and guide pin this release. A reader following the guide was pinning
+`~> 0.9`/`v0.9.0` while the project shipped v0.11.0 (#192); the snippets are now derived
+from the version by a test, so a release bump fails until the docs follow.
+
 ## v0.11.0 — 2026-10-08
 
 **No refill, no re-push for existing objects:** keys are unchanged and the schema stays `v3`.

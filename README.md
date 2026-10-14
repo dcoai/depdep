@@ -90,7 +90,7 @@ depdep for itself:
 
 ```elixir
 # scripts/depdep.exs
-Mix.install([{:depdep, "~> 0.11"}])
+Mix.install([{:depdep, "~> 0.12"}])
 
 Depdep.CLI.main(System.argv())
 ```
